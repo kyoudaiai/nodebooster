@@ -1,8 +1,8 @@
 require("@nomicfoundation/hardhat-toolbox");
+require('@openzeppelin/hardhat-upgrades');
 
 require("@nomiclabs/hardhat-ethers");
 require("@nomiclabs/hardhat-etherscan");
-require("@openzeppelin/hardhat-upgrades");
 
 const { mnemonic_main, eurfx_key, phpfx_key, ubst_key, sndao_key } = require("./.secrets.json");
 const mnemonic = mnemonic_main;
@@ -24,8 +24,9 @@ module.exports = {
     settings: {
       optimizer: {
         enabled: true,
-      },
-    },
+        runs: 200
+      }
+    }
   },
   networks: {
     local: {
