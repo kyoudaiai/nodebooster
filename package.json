@@ -1,0 +1,25 @@
+{
+  "name": "usdfx-hardhat",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "deploy": "env $(cat .env) npx hardhat run"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@openzeppelin/contracts": "^4.9.6",
+    "@openzeppelin/contracts-upgradeable": "^4.9.6"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^2.0.0",
+    "@nomiclabs/hardhat-ethers": "^2.2.0",
+    "@nomiclabs/hardhat-etherscan": "^3.1.1",
+    "@openzeppelin/hardhat-upgrades": "^1.21.0",
+    "ethers": "^5.7.1",
+    "hardhat": "^2.12.0",
+    "hardhat-ethers": "^1.0.1"
+  }
+}
