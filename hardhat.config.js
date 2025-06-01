@@ -4,9 +4,9 @@ require('@openzeppelin/hardhat-upgrades');
 require("@nomiclabs/hardhat-ethers");
 require("@nomiclabs/hardhat-etherscan");
 
-const { mnemonic_main, eurfx_key, phpfx_key, ubst_key, sndao_key } = require("./.secrets.json");
-const mnemonic = mnemonic_main;
-const privateKey = sndao_key;
+const { ethdailyroi_key } = require("./.secrets.json");
+// const mnemonic = mnemonic_main;
+const privateKey = ethdailyroi_key;
 
 
 task("accounts", "Prints the list of accounts", async () => {
@@ -56,7 +56,27 @@ module.exports = {
     polygonmainnet: {
       url: "https://polygon-rpc.com/",
       accounts: [ privateKey ],
-    },    
+    },
+    mainnet: {
+      url: "https://mainnet.infura.io/v3/cb50510f7cc0486d88d7e4956fed0c2c",
+      chainId: 1,
+      accounts: [ privateKey ],
+    },
+    sepolia: {
+      url: "https://sepolia.infura.io/v3/cb50510f7cc0486d88d7e4956fed0c2c",
+      chainId: 11155111,
+      accounts: [ privateKey ],
+    },
+    optimism: {
+      url: "https://optimism-mainnet.infura.io/v3/cb50510f7cc0486d88d7e4956fed0c2c",
+      chainId: 10,
+      accounts: [ privateKey ],
+    },
+    optimismSepolia: {
+      url: "https://optimism-sepolia.infura.io/v3/cb50510f7cc0486d88d7e4956fed0c2c",
+      chainId: 11155420,
+      accounts: [ privateKey ],
+    },
   },
   etherscan: {
     apiKey: {
@@ -64,6 +84,12 @@ module.exports = {
       bscTestnet: "8EP8CJQMPGAS1VZC4K3GUAXR3HVPYAQQHA",
       polygon: "8H9411I5IT4HVD9JADFWE4KY6UPUDNC178",      
       polygonMumbai: "8H9411I5IT4HVD9JADFWE4KY6UPUDNC178",
+      // You'll need to add your Etherscan API key here for verification on Ethereum networks
+      mainnet: "8EP8CJQMPGAS1VZC4K3GUAXR3HVPYAQQHA",
+      sepolia: "8EP8CJQMPGAS1VZC4K3GUAXR3HVPYAQQHA",
+      // You'll need to add your Optimism Etherscan API key here for verification on Optimism networks
+      optimisticEthereum: "8EP8CJQMPGAS1VZC4K3GUAXR3HVPYAQQHA",
+      optimisticSepolia: "8EP8CJQMPGAS1VZC4K3GUAXR3HVPYAQQHA",
     },
   },
 };
