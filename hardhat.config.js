@@ -83,11 +83,9 @@ module.exports = {
       bsc: "8EP8CJQMPGAS1VZC4K3GUAXR3HVPYAQQHA",
       bscTestnet: "8EP8CJQMPGAS1VZC4K3GUAXR3HVPYAQQHA",
       polygon: "8H9411I5IT4HVD9JADFWE4KY6UPUDNC178",      
-      polygonMumbai: "8H9411I5IT4HVD9JADFWE4KY6UPUDNC178",
-      // You'll need to add your Etherscan API key here for verification on Ethereum networks
+      polygonMumbai: "8H9411I5IT4HVD9JADFWE4KY6UPUDNC178",      
       mainnet: "8EP8CJQMPGAS1VZC4K3GUAXR3HVPYAQQHA",
-      sepolia: "8EP8CJQMPGAS1VZC4K3GUAXR3HVPYAQQHA",
-      // You'll need to add your Optimism Etherscan API key here for verification on Optimism networks
+      sepolia: "8EP8CJQMPGAS1VZC4K3GUAXR3HVPYAQQHA",      
       optimisticEthereum: "8EP8CJQMPGAS1VZC4K3GUAXR3HVPYAQQHA",
       optimisticSepolia: "8EP8CJQMPGAS1VZC4K3GUAXR3HVPYAQQHA",
     },

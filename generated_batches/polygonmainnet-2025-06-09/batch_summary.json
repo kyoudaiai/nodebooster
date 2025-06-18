@@ -1,0 +1,35 @@
+{
+  "network": "polygonmainnet",
+  "timestamp": "2025-06-09T11:21:49.082Z",
+  "totalPlayers": 391,
+  "totalBatches": 20,
+  "batchSize": 20,
+  "contractAddress": "0xaa7e573491C85abc4b2d2D875064618aC19e5412",
+  "batchFiles": [
+    "batch_001_multicall.json",
+    "batch_002_multicall.json",
+    "batch_003_multicall.json",
+    "batch_004_multicall.json",
+    "batch_005_multicall.json",
+    "batch_006_multicall.json",
+    "batch_007_multicall.json",
+    "batch_008_multicall.json",
+    "batch_009_multicall.json",
+    "batch_010_multicall.json",
+    "batch_011_multicall.json",
+    "batch_012_multicall.json",
+    "batch_013_multicall.json",
+    "batch_014_multicall.json",
+    "batch_015_multicall.json",
+    "batch_016_multicall.json",
+    "batch_017_multicall.json",
+    "batch_018_multicall.json",
+    "batch_019_multicall.json",
+    "batch_020_multicall.json"
+  ],
+  "usage": {
+    "description": "Use these batch files to execute multicalls manually or with external tools",
+    "exampleHardhatCall": "await contract.multicall(batchData.multicallData)",
+    "gasEstimation": "Estimate gas before execution: await contract.estimateGas.multicall(batchData.multicallData)"
+  }
+}

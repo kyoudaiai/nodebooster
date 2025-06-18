@@ -1,0 +1,17 @@
+{
+  "network": "optimism",
+  "timestamp": "2025-06-05T09:56:29.155Z",
+  "totalPlayers": 40,
+  "totalBatches": 2,
+  "batchSize": 20,
+  "contractAddress": "0xaa7e573491C85abc4b2d2D875064618aC19e5412",
+  "batchFiles": [
+    "batch_001_multicall.json",
+    "batch_002_multicall.json"
+  ],
+  "usage": {
+    "description": "Use these batch files to execute multicalls manually or with external tools",
+    "exampleHardhatCall": "await contract.multicall(batchData.multicallData)",
+    "gasEstimation": "Estimate gas before execution: await contract.estimateGas.multicall(batchData.multicallData)"
+  }
+}
