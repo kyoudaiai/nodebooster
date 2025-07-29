@@ -29,9 +29,18 @@
         console.log("ETHXP-TokenSale deployed at:", ethxpTokenSale.address);
 
         
-        // Deploy DailyEthRoi contract
+        // deploy old DailyEthRoi contract
+        console.log("Deploying old DailyEthRoi contract...");
+        const oldDailyEthRoiPath = `browser/artifacts/DailyEthRoiV1.json`
+        const oldDailyEthRoiMetadata = JSON.parse(await remix.call('fileManager', 'getFile', oldDailyEthRoiPath))
+        let oldDailyEthRoiFactory = new ethers.ContractFactory(oldDailyEthRoiMetadata.abi, oldDailyEthRoiMetadata.data.bytecode.object, signer);
+        let oldDailyEthRoi = await oldDailyEthRoiFactory.deploy();
+        await oldDailyEthRoi.deployed()
+        console.log("Old DailyEthRoi deployed at:", oldDailyEthRoi.address);
+
+        // Deploy New DailyEthRoi With ETHXP Payout and auto migration contract
         console.log("Deploying DailyEthRoi contract...");
-        const dailyEthRoiPath = `browser/artifacts/DailyEthRoiV2.json`
+        const dailyEthRoiPath = `browser/artifacts/DailyEthRoiV3.json`
         const dailyEthRoiMetadata = JSON.parse(await remix.call('fileManager', 'getFile', dailyEthRoiPath))
         let dailyEthRoiFactory = new ethers.ContractFactory(dailyEthRoiMetadata.abi, dailyEthRoiMetadata.data.bytecode.object, signer);
         let dailyEthRoi = await dailyEthRoiFactory.deploy();
@@ -40,7 +49,9 @@
         
         
         
+        // Log the addresses of the deployed contracts
         console.log("\n=== Deployment Summary ===");
+        console.log("Old DailyEthRoi address:", oldDailyEthRoi.address);
         console.log("DailyEthRoi address:", dailyEthRoi.address);
         console.log("MOCKERC20Token address:", mockERC20.address);
         console.log("ETHXP-TokenSale address:", ethxpTokenSale.address);
@@ -48,6 +59,12 @@
         console.log('Deployment successful.')
         
         console.log("\n=== Post-Deployment Configuration ===");
+
+        // set the old DailyEthRoi contract address in the new DailyEthRoi contract
+        console.log("Setting old DailyEthRoi contract address...");
+        const setOldDailyEthRoiTx = await dailyEthRoi.setOldContract(oldDailyEthRoi.address);
+        await setOldDailyEthRoiTx.wait();
+        console.log("Old DailyEthRoi contract address set to:", oldDailyEthRoi.address);
         
         // Approve 10 million tokens from first signer to DailyEthRoi address
         console.log("Approving 10 million tokens to DailyEthRoi contract...");
@@ -78,11 +95,15 @@
         console.log("Token wallet address set");
         
         console.log("\n=== Final Summary ===");
-        console.log("DailyEthRoi address:", dailyEthRoi.address);
+        console.log("Old DailyEthRoi address:", oldDailyEthRoi.address);
+        console.log("New DailyEthRoi address:", dailyEthRoi.address);
         console.log("MOCKERC20Token address:", mockERC20.address);
         console.log("ETHXP-TokenSale address:", ethxpTokenSale.address);
         console.log("Signer address used:", signerAddress);
-        console.log("10M tokens approved to DailyEthRoi");
+        console.log("10 million tokens approved to new DailyEthRoi contract");
+        console.log("TokenSale contract address set to:", ethxpTokenSale.address);
+        console.log("ERC20 token address set to:", mockERC20.address);
+        console.log("Token wallet address set to:", signerAddress);
         console.log("All contracts configured successfully");
         console.log('Deployment and configuration completed.')
         
