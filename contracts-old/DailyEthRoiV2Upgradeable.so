@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "./DailyEthRoiV1Upgradeable.sol";
+
+contract DailyEthRoiV2Upgradeable is DailyEthRoiV1Upgradeable {
+    // New variables for V2
+    uint256 public withdrawalFee;
+    mapping(address => bool) public whitelist;
+
+    /**
+     * @dev Initialize the V2 contract (will not be called on upgrade)
+     * This is here as a demonstration, but upgrades will keep the state from V1
+     */
+    function initializeV2(uint256 _withdrawalFee) public reinitializer(2) {
+        withdrawalFee = _withdrawalFee;
+    }
+
+    /**
+     * @dev Add an address to the whitelist
+     * @param _user Address to add to whitelist
+     */
+    function addToWhitelist(address _user) external onlyOwner {
+        whitelist[_user] = true;
+    }
+
+    /**
+     * @dev Remove an address from the whitelist
+     * @param _user Address to remove from whitelist
+     */
+    function removeFromWhitelist(address _user) external onlyOwner {
+        whitelist[_user] = false;
+    }
+
+    /**
+     * @dev Set the withdrawal fee
+     * @param _fee New withdrawal fee
+     */
+    function setWithdrawalFee(uint256 _fee) external onlyOwner {
+        require(_fee <= 1000, "Fee cannot exceed 10%");
+        withdrawalFee = _fee;
+    }
+
+    /**
+     * @dev Claim ROI with fee for non-whitelisted users
+     * Overrides the claimROI function from V1
+     */
+    function claimROI() external override nonReentrant {
+        User storage user = users[msg.sender];
+        require(user.investments.length > 0, "No investments found");
+
+        uint256 totalToClaim = 0;
+
+        for (uint256 i = 0; i < user.investments.length; i++) {
+            Investment storage investment = user.investments[i];
+            
+            if (investment.active) {
+                uint256 roi = calculateROI(investment);
+                if (roi > 0) {
+                    totalToClaim += roi;
+                    investment.lastClaimTime = block.timestamp;
+                }
+            }
+        }
+
+        require(totalToClaim > 0, "No ROI to claim");
+        require(address(this).balance >= totalToClaim, "Contract has insufficient balance");
+
+        // Apply withdrawal fee for non-whitelisted users
+        uint256 fee = 0;
+        if (!whitelist[msg.sender] && withdrawalFee > 0) {
+            fee = totalToClaim * withdrawalFee / 10000;
+            totalToClaim -= fee;
+        }
+
+        user.totalClaimed += totalToClaim;
+        totalClaimed += totalToClaim;
+
+        (bool success, ) = msg.sender.call{value: totalToClaim}("");
+        require(success, "ROI transfer failed");
+
+        emit ROIClaimed(msg.sender, totalToClaim);
+    }
+
+    /**
+     * @dev Check if a user is whitelisted
+     * @param _user Address to check
+     * @return Whether the user is whitelisted
+     */
+    function isWhitelisted(address _user) external view returns (bool) {
+        return whitelist[_user];
+    }
+}

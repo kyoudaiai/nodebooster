@@ -1,0 +1,275 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/math/SafeMathUpgradeable.sol";
+
+contract DailyEthRoiV1Upgradeable is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeable, PausableUpgradeable {
+    using SafeMathUpgradeable for uint256;
+
+    // Investment data structure
+    struct Investment {
+        uint256 amount;
+        uint256 startTime;
+        uint256 lastClaimTime;
+        bool active;
+    }
+
+    // User data structure
+    struct User {
+        Investment[] investments;
+        address referrer;
+        uint256 totalInvested;
+        uint256 totalClaimed;
+        uint256 referralBonus;
+    }
+
+    // Contract variables
+    mapping(address => User) public users;
+    mapping(address => address[]) public referrals;
+
+    uint256 public minInvestment;
+    uint256 public maxInvestment;
+    uint256 public dailyRoi;
+    uint256 public referralPercentage;
+    uint256 public totalInvestments;
+    uint256 public totalClaimed;
+    uint256 public totalUsers;
+
+    // Events
+    event Invested(address indexed user, uint256 amount, address indexed referrer);
+    event ROIClaimed(address indexed user, uint256 amount);
+    event ReferralPaid(address indexed referrer, address indexed investor, uint256 amount);
+    event WithdrawnStuck(address indexed owner, uint256 amount);
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    /**
+     * @dev Initializes the contract (replaces constructor)
+     * @param _minInvestment Minimum investment amount in ETH
+     * @param _maxInvestment Maximum investment amount in ETH
+     * @param _dailyRoi Daily ROI percentage (multiplied by 100 for precision)
+     * @param _referralPercentage Referral bonus percentage (multiplied by 100)
+     */
+    function initialize(
+        uint256 _minInvestment,
+        uint256 _maxInvestment,
+        uint256 _dailyRoi,
+        uint256 _referralPercentage
+    ) public initializer {
+        __Ownable_init(msg.sender);
+        __ReentrancyGuard_init();
+        __Pausable_init();
+
+        minInvestment = _minInvestment;
+        maxInvestment = _maxInvestment;
+        dailyRoi = _dailyRoi;
+        referralPercentage = _referralPercentage;
+    }
+
+    /**
+     * @dev Invest ETH in the contract
+     * @param _referrer Referrer's address (can be zero address)
+     */
+    function invest(address _referrer) external payable whenNotPaused nonReentrant {
+        require(msg.value >= minInvestment, "Investment below minimum");
+        require(msg.value <= maxInvestment, "Investment above maximum");
+        require(_referrer != msg.sender, "Cannot refer yourself");
+
+        User storage user = users[msg.sender];
+        
+        // Add new investment
+        user.investments.push(Investment({
+            amount: msg.value,
+            startTime: block.timestamp,
+            lastClaimTime: block.timestamp,
+            active: true
+        }));
+
+        // Update user data
+        user.totalInvested += msg.value;
+        
+        // Handle referral
+        if (_referrer != address(0) && user.referrer == address(0)) {
+            user.referrer = _referrer;
+            referrals[_referrer].push(msg.sender);
+            
+            // Pay referral bonus
+            uint256 referralBonus = msg.value.mul(referralPercentage).div(10000);
+            if (referralBonus > 0) {
+                (bool success, ) = _referrer.call{value: referralBonus}("");
+                require(success, "Referral transfer failed");
+                users[_referrer].referralBonus += referralBonus;
+                emit ReferralPaid(_referrer, msg.sender, referralBonus);
+            }
+        }
+
+        // Update contract stats
+        totalInvestments += msg.value;
+        
+        // Increment user count if this is their first investment
+        if (user.investments.length == 1) {
+            totalUsers += 1;
+        }
+
+        emit Invested(msg.sender, msg.value, user.referrer);
+    }
+
+    /**
+     * @dev Claim ROI from all active investments
+     */
+    function claimROI() external nonReentrant {
+        User storage user = users[msg.sender];
+        require(user.investments.length > 0, "No investments found");
+
+        uint256 totalToClaim = 0;
+
+        for (uint256 i = 0; i < user.investments.length; i++) {
+            Investment storage investment = user.investments[i];
+            
+            if (investment.active) {
+                uint256 roi = calculateROI(investment);
+                if (roi > 0) {
+                    totalToClaim += roi;
+                    investment.lastClaimTime = block.timestamp;
+                }
+            }
+        }
+
+        require(totalToClaim > 0, "No ROI to claim");
+        require(address(this).balance >= totalToClaim, "Contract has insufficient balance");
+
+        user.totalClaimed += totalToClaim;
+        totalClaimed += totalToClaim;
+
+        (bool success, ) = msg.sender.call{value: totalToClaim}("");
+        require(success, "ROI transfer failed");
+
+        emit ROIClaimed(msg.sender, totalToClaim);
+    }
+
+    /**
+     * @dev Calculate ROI for a specific investment
+     * @param _investment The investment to calculate ROI for
+     * @return The calculated ROI in wei
+     */
+    function calculateROI(Investment memory _investment) internal view returns (uint256) {
+        if (!_investment.active) return 0;
+
+        uint256 duration = block.timestamp.sub(_investment.lastClaimTime);
+        uint256 daysElapsed = duration.div(1 days);
+        
+        if (daysElapsed == 0) return 0;
+
+        // Calculate daily ROI (using 10000 as base for percentage)
+        uint256 roi = _investment.amount.mul(dailyRoi).mul(daysElapsed).div(10000);
+        
+        return roi;
+    }
+
+    /**
+     * @dev Get all investments for a user
+     * @param _user Address of the user
+     * @return User's investments
+     */
+    function getUserInvestments(address _user) external view returns (Investment[] memory) {
+        return users[_user].investments;
+    }
+
+    /**
+     * @dev Get pending ROI for a user
+     * @param _user Address of the user
+     * @return Total pending ROI
+     */
+    function getPendingROI(address _user) external view returns (uint256) {
+        User storage user = users[_user];
+        
+        uint256 totalROI = 0;
+        for (uint256 i = 0; i < user.investments.length; i++) {
+            if (user.investments[i].active) {
+                totalROI += calculateROI(user.investments[i]);
+            }
+        }
+        
+        return totalROI;
+    }
+
+    /**
+     * @dev Get referrals for a specific user
+     * @param _user Address of the user
+     * @return Array of referral addresses
+     */
+    function getUserReferrals(address _user) external view returns (address[] memory) {
+        return referrals[_user];
+    }
+
+    /**
+     * @dev Pause the contract
+     */
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    /**
+     * @dev Unpause the contract
+     */
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
+    /**
+     * @dev Update contract parameters
+     * @param _minInvestment New minimum investment
+     * @param _maxInvestment New maximum investment
+     * @param _dailyRoi New daily ROI percentage (x100)
+     * @param _referralPercentage New referral percentage (x100)
+     */
+    function updateParameters(
+        uint256 _minInvestment,
+        uint256 _maxInvestment,
+        uint256 _dailyRoi,
+        uint256 _referralPercentage
+    ) external onlyOwner {
+        minInvestment = _minInvestment;
+        maxInvestment = _maxInvestment;
+        dailyRoi = _dailyRoi;
+        referralPercentage = _referralPercentage;
+    }
+
+    /**
+     * @dev Withdraw stuck ETH in case of emergency
+     * @param _amount Amount to withdraw
+     */
+    function withdrawStuck(uint256 _amount) external onlyOwner {
+        require(_amount <= address(this).balance, "Amount exceeds balance");
+        (bool success, ) = owner().call{value: _amount}("");
+        require(success, "Transfer failed");
+        emit WithdrawnStuck(owner(), _amount);
+    }
+
+    /**
+     * @dev Get contract balance
+     */
+    function getContractBalance() external view returns (uint256) {
+        return address(this).balance;
+    }
+
+    /**
+     * @dev Get investment statistics
+     * @return Total investments, total claimed, total users
+     */
+    function getStatistics() external view returns (uint256, uint256, uint256) {
+        return (totalInvestments, totalClaimed, totalUsers);
+    }
+
+    /**
+     * @dev Function to receive ETH
+     */
+    receive() external payable {}
+}
