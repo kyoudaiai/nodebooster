@@ -81,9 +81,11 @@ contract NodeBoosterV1 is
         address referrer;
         uint256 totalReferrals;
         uint256 totalReferralRewards;
-        uint256 currentEngine; // Current engine ID (0-9)
+        uint256 currentEngine; // Current engine ID (0 = no engine, 1-10 = engines)
         uint256 engineStartTime; // When the current engine was activated
-        // uint256 pendingRewards; // Accumulated rewards waiting to be claimed
+        uint256 lastClaimTime; // Last time rewards were claimed for current engine
+        mapping(uint256 => uint256) totalDaysRewarded; // Total days rewarded per engine
+        mapping(uint256 => uint256) totalRewardsClaimedPerEngine; // Total rewards claimed per engine
         Rewards[] pendingRewards; // History of rewards
         uint256 totalRewardsClaimed; // Total rewards claimed by user
     }
@@ -94,6 +96,7 @@ contract NodeBoosterV1 is
         uint256 priceInAvax; // Price in AVAX (18 decimals)
         uint256 hashPower; // Hash power units
         uint256 maxRewardCapDays; // Maximum reward period in days
+        uint256 maxRewardCapPercentage; // Maximum reward cap as percentage (e.g., 450 = 450%)
         string name; // Engine name
     }
     
@@ -152,6 +155,7 @@ contract NodeBoosterV1 is
         uint256 priceInAvax,
         uint256 hashPower,
         uint256 maxRewardCapDays,
+        uint256 maxRewardCapPercentage,
         bool isActive
     );
     
@@ -235,16 +239,16 @@ contract NodeBoosterV1 is
         defaultReferrer = msg.sender;
         
         // Register the deployer as the first user (without fees)
-        userAccounts[msg.sender] = UserAccount({
-            isRegistered: true,
-            referrer: address(0),
-            totalReferrals: 0,
-            totalReferralRewards: 0,
-            currentEngine: 0,
-            engineStartTime: block.timestamp,
-            pendingRewards: new Rewards[](0),
-            totalRewardsClaimed: 0
-        });
+        UserAccount storage deployerAccount = userAccounts[msg.sender];
+        deployerAccount.isRegistered = true;
+        deployerAccount.referrer = address(0);
+        deployerAccount.totalReferrals = 0;
+        deployerAccount.totalReferralRewards = 0;
+        deployerAccount.currentEngine = 0; // No engine initially
+        deployerAccount.engineStartTime = 0; // No engine start time
+        deployerAccount.lastClaimTime = 0;
+        deployerAccount.totalRewardsClaimed = 0;
+        // Note: pendingRewards array and totalDaysRewarded mapping are automatically initialized
         
         totalUsers = 1;
         usersList.push(msg.sender);
@@ -299,16 +303,16 @@ contract NodeBoosterV1 is
         usdcToken.safeTransferFrom(msg.sender, address(this), REGISTRATION_FEE);
         
         // Register the user
-        userAccounts[msg.sender] = UserAccount({
-            isRegistered: true,
-            referrer: finalReferrer,
-            totalReferrals: 0,
-            totalReferralRewards: 0,
-            currentEngine: 0,
-            engineStartTime: block.timestamp,
-            pendingRewards: new Rewards[](0),
-            totalRewardsClaimed: 0
-        });
+        UserAccount storage newAccount = userAccounts[msg.sender];
+        newAccount.isRegistered = true;
+        newAccount.referrer = finalReferrer;
+        newAccount.totalReferrals = 0;
+        newAccount.totalReferralRewards = 0;
+        newAccount.currentEngine = 0; // No engine initially
+        newAccount.engineStartTime = 0; // No engine start time
+        newAccount.lastClaimTime = 0; // No claims yet
+        newAccount.totalRewardsClaimed = 0;
+        // Note: pendingRewards array and totalDaysRewarded mapping are automatically initialized
         
         totalUsers++;
         totalUsdcCollected += REGISTRATION_FEE;
@@ -343,11 +347,12 @@ contract NodeBoosterV1 is
     
     /**
      * @dev Configure an engine
-     * @param _engineId Engine ID (0-based)
+     * @param _engineId Engine ID (1-10)
      * @param _name Engine name
      * @param _priceInAvax Price in AVAX (18 decimals)
      * @param _hashPower Hash power units
      * @param _maxRewardCapDays Maximum reward period in days
+     * @param _maxRewardCapPercentage Maximum reward cap as percentage (e.g., 450 = 450%)
      * @param _isActive Whether the engine is active
      */
     function configureEngine(
@@ -356,12 +361,14 @@ contract NodeBoosterV1 is
         uint256 _priceInAvax,
         uint256 _hashPower,
         uint256 _maxRewardCapDays,
+        uint256 _maxRewardCapPercentage,
         bool _isActive
     ) external onlyOwner {
-        require(_engineId < MAX_ENGINES, "NodeBooster: Engine ID exceeds maximum");
+        require(_engineId >= 1 && _engineId < MAX_ENGINES, "NodeBooster: Invalid engine ID");
         require(_priceInAvax > 0, "NodeBooster: Price must be greater than 0");
         require(_hashPower > 0, "NodeBooster: Hash power must be greater than 0");
         require(_maxRewardCapDays > 0, "NodeBooster: Reward cap days must be greater than 0");
+        require(_maxRewardCapPercentage > 0, "NodeBooster: Reward cap percentage must be greater than 0");
         require(bytes(_name).length > 0, "NodeBooster: Engine name cannot be empty");
         
         engines[_engineId] = Engine({
@@ -369,15 +376,16 @@ contract NodeBoosterV1 is
             priceInAvax: _priceInAvax,
             hashPower: _hashPower,
             maxRewardCapDays: _maxRewardCapDays,
+            maxRewardCapPercentage: _maxRewardCapPercentage,
             name: _name
         });
         
-        // Update engine count if this is a new engine
+        // Update engine count if this is a new engine (account for engine 0 being reserved)
         if (_engineId >= engineCount) {
             engineCount = _engineId + 1;
         }
         
-        emit EngineConfigured(_engineId, _name, _priceInAvax, _hashPower, _maxRewardCapDays, _isActive);
+        emit EngineConfigured(_engineId, _name, _priceInAvax, _hashPower, _maxRewardCapDays, _maxRewardCapPercentage, _isActive);
     }
     
     /**
@@ -472,33 +480,60 @@ contract NodeBoosterV1 is
     }
     
     /**
-     * @dev Upgrade user's engine to a higher level
-     * @param targetEngine Target engine ID to upgrade to
+     * @dev Purchase or upgrade user's engine
+     * @param targetEngine Target engine ID to purchase/upgrade to (1-10)
      */
     function upgradeEngine(uint256 targetEngine) external payable whenNotPaused nonReentrant notBlacklisted {
         require(userAccounts[msg.sender].isRegistered, "User not registered");
-        require(targetEngine < engineCount, "Engine does not exist");
+        require(targetEngine >= 1 && targetEngine < engineCount, "Invalid engine ID");
         require(engines[targetEngine].isActive, "Target engine not active");
         
         UserAccount storage account = userAccounts[msg.sender];
         require(targetEngine > account.currentEngine, "Target engine must be higher than current");
         
-        // Calculate and store pending rewards before upgrade
-        uint256 pendingRewards = calculatePendingRewards(msg.sender);
+        uint256 pendingRewards = 0;
         
-        if (pendingRewards > 0) {
-            account.pendingRewards.push(Rewards({
-                engineId: account.currentEngine,
-                startTime: account.engineStartTime,
-                endTime: block.timestamp,
-                withdrawalTime: 0,
-                amount: pendingRewards,
-                completed: false
-            }));
+        // If user currently has an engine, calculate and store pending rewards
+        if (account.currentEngine > 0) {
+            pendingRewards = calculatePendingRewards(msg.sender);
+            
+            if (pendingRewards > 0) {
+                // Calculate days being rewarded before upgrade
+                uint256 lastRewardTime = account.lastClaimTime > 0 ? account.lastClaimTime : account.engineStartTime;
+                uint256 daysPending = (block.timestamp - lastRewardTime) / 1 days;
+                
+                // Update total days rewarded for the current engine (capped)
+                Engine storage currentEngine = engines[account.currentEngine];
+                uint256 alreadyRewardedDays = account.totalDaysRewarded[account.currentEngine];
+                uint256 remainingDays = currentEngine.maxRewardCapDays > alreadyRewardedDays ? 
+                    currentEngine.maxRewardCapDays - alreadyRewardedDays : 0;
+                uint256 actualDaysPending = daysPending > remainingDays ? remainingDays : daysPending;
+                
+                account.totalDaysRewarded[account.currentEngine] += actualDaysPending;
+                
+                // Also update the rewards claimed per engine when storing pending rewards
+                account.totalRewardsClaimedPerEngine[account.currentEngine] += pendingRewards;
+                
+                account.pendingRewards.push(Rewards({
+                    engineId: account.currentEngine,
+                    startTime: lastRewardTime,
+                    endTime: block.timestamp,
+                    withdrawalTime: 0,
+                    amount: pendingRewards,
+                    completed: false
+                }));
+            }
         }
         
-        // Calculate upgrade cost
-        uint256 upgradeCost = calculateUpgradeCost(account.currentEngine, targetEngine);
+        // Calculate cost (if upgrading from engine, only pay difference; if first purchase, pay cumulative)
+        uint256 upgradeCost;
+        if (account.currentEngine == 0) {
+            // First engine purchase - pay cumulative cost
+            upgradeCost = getCumulativeCost(targetEngine);
+        } else {
+            // Upgrading - pay difference
+            upgradeCost = calculateUpgradeCost(account.currentEngine, targetEngine);
+        }
         
         // Transfer AVAX payment
         require(msg.value >= upgradeCost, "Insufficient AVAX payment");
@@ -510,9 +545,10 @@ contract NodeBoosterV1 is
         
         uint256 oldEngine = account.currentEngine;
         
-        // Upgrade the engine
+        // Set the new engine
         account.currentEngine = targetEngine;
         account.engineStartTime = block.timestamp;
+        account.lastClaimTime = 0; // Reset claim time for new engine
         
         // Distribute AVAX to payout wallets
         _distributeAvaxToPayouts(upgradeCost);
@@ -525,6 +561,7 @@ contract NodeBoosterV1 is
      */
     function claimRewards() external whenNotPaused nonReentrant notBlacklisted {
         require(userAccounts[msg.sender].isRegistered, "User not registered");
+        require(userAccounts[msg.sender].currentEngine > 0, "No engine");
         
         UserAccount storage account = userAccounts[msg.sender];
         
@@ -553,9 +590,22 @@ contract NodeBoosterV1 is
         
         // Add current pending rewards as a new completed reward entry
         if (currentPendingRewards > 0) {
+            // Calculate days being rewarded in this claim
+            uint256 lastRewardTime = account.lastClaimTime > 0 ? account.lastClaimTime : account.engineStartTime;
+            uint256 daysClaimed = (block.timestamp - lastRewardTime) / 1 days;
+            
+            // Update total days rewarded for this engine (capped)
+            Engine storage engine = engines[account.currentEngine];
+            uint256 alreadyRewardedDays = account.totalDaysRewarded[account.currentEngine];
+            uint256 remainingDays = engine.maxRewardCapDays > alreadyRewardedDays ? 
+                engine.maxRewardCapDays - alreadyRewardedDays : 0;
+            uint256 actualDaysClaimed = daysClaimed > remainingDays ? remainingDays : daysClaimed;
+            
+            account.totalDaysRewarded[account.currentEngine] += actualDaysClaimed;
+            
             account.pendingRewards.push(Rewards({
                 engineId: account.currentEngine,
-                startTime: account.engineStartTime,
+                startTime: lastRewardTime,
                 endTime: block.timestamp,
                 withdrawalTime: block.timestamp,
                 amount: currentPendingRewards,
@@ -563,9 +613,16 @@ contract NodeBoosterV1 is
             }));
         }
         
-        // Reset engine start time
-        account.engineStartTime = block.timestamp;
+        // Update last claim time
+        account.lastClaimTime = block.timestamp;
         account.totalRewardsClaimed += totalRewards;
+        
+        // Update rewards claimed for current engine (only current pending rewards)
+        if (currentPendingRewards > 0) {
+            account.totalRewardsClaimedPerEngine[account.currentEngine] += currentPendingRewards;
+        }
+        
+        // Note: Stored rewards were already counted per engine when they were created during upgrades
         
         // Update global stats
         totalAvax0Distributed += totalRewards;
@@ -637,14 +694,20 @@ contract NodeBoosterV1 is
     
     /**
      * @dev Calculate cumulative cost from currentEngine to targetEngine (inclusive)
-     * @param currentEngine Starting engine (exclusive if upgrading)
-     * @param targetEngine Target engine (inclusive)
+     * @param currentEngine Starting engine (0 for no engine, 1-10 for engines)
+     * @param targetEngine Target engine (1-10)
      * @return Total cost in AVAX
      */
     function calculateUpgradeCost(uint256 currentEngine, uint256 targetEngine) public view returns (uint256) {
-        require(targetEngine < engineCount, "Target engine does not exist");
+        require(targetEngine >= 1 && targetEngine < engineCount, "Invalid target engine");
         require(targetEngine > currentEngine, "Target engine must be higher than current");
         
+        if (currentEngine == 0) {
+            // First purchase - return cumulative cost
+            return getCumulativeCost(targetEngine);
+        }
+        
+        // Upgrade cost - difference between engines
         uint256 totalCost = 0;
         for (uint256 i = currentEngine + 1; i <= targetEngine; i++) {
             require(engines[i].isActive, "Engine not active");
@@ -655,15 +718,15 @@ contract NodeBoosterV1 is
     }
     
     /**
-     * @dev Calculate cumulative cost of engines from 0 to engineId (inclusive)
-     * @param engineId Engine to calculate cumulative cost for
+     * @dev Calculate cumulative cost of engines from 1 to engineId (inclusive)
+     * @param engineId Engine to calculate cumulative cost for (1-10)
      * @return Total cumulative cost in AVAX
      */
     function getCumulativeCost(uint256 engineId) public view returns (uint256) {
-        require(engineId < engineCount, "Engine does not exist");
+        require(engineId >= 1 && engineId < engineCount, "Invalid engine ID");
         
         uint256 totalCost = 0;
-        for (uint256 i = 0; i <= engineId; i++) {
+        for (uint256 i = 1; i <= engineId; i++) {
             totalCost += engines[i].priceInAvax;
         }
         
@@ -678,8 +741,8 @@ contract NodeBoosterV1 is
     function calculatePendingRewards(address user) public view returns (uint256) {
         UserAccount storage account = userAccounts[user];
         
-        if (!account.isRegistered || account.engineStartTime == 0) {
-            return 0;
+        if (!account.isRegistered || account.currentEngine == 0 || account.engineStartTime == 0) {
+            return 0; // No engine or not registered
         }
         
         Engine storage engine = engines[account.currentEngine];
@@ -687,35 +750,294 @@ contract NodeBoosterV1 is
             return 0;
         }
         
-        uint256 daysPassed = (block.timestamp - account.engineStartTime) / 1 days;        
+        // Calculate days since last claim (or engine start if never claimed)
+        uint256 lastRewardTime = account.lastClaimTime > 0 ? account.lastClaimTime : account.engineStartTime;
+        uint256 daysSinceLastClaim = (block.timestamp - lastRewardTime) / 1 days;
         
-        // Cap at maxRewardCapDays
-        if (daysPassed > engine.maxRewardCapDays) {
-            daysPassed = engine.maxRewardCapDays;
+        if (daysSinceLastClaim == 0) {
+            return 0;
         }
         
-        if (daysPassed == 0) {
+        // Check how many days have already been rewarded for this engine
+        uint256 alreadyRewardedDays = account.totalDaysRewarded[account.currentEngine];
+        
+        // Calculate remaining days available for rewards (cap at maxRewardCapDays)
+        uint256 maxDays = engine.maxRewardCapDays;
+        if (alreadyRewardedDays >= maxDays) {
+            return 0; // Already reached maximum reward cap for this engine
+        }
+        
+        uint256 remainingDays = maxDays - alreadyRewardedDays;
+        uint256 rewardableDays = daysSinceLastClaim > remainingDays ? remainingDays : daysSinceLastClaim;
+        
+        if (rewardableDays == 0) {
             return 0;
         }
         
         // Get cumulative cost for this engine
         uint256 cumulativeCost = getCumulativeCost(account.currentEngine);
         
-        // Calculate daily reward: (cumulativeCost * 450% / 405 days) * (1 + hashPower%)
-        // Formula: ((cumulativeCost * 4.5) / 405) * (100 + hashPower) / 100
-        uint256 dailyRewardBase = (cumulativeCost * 450) / (405 * 100); // 4.5% divided by 405 days
+        // Calculate maximum allowed rewards for this engine using engine's cap percentage
+        uint256 maxRewardsForEngine = (cumulativeCost * engine.maxRewardCapPercentage) / 100;
+        
+        // Check how much has already been claimed for this engine
+        uint256 alreadyClaimedForEngine = account.totalRewardsClaimedPerEngine[account.currentEngine];
+        
+        // If already reached reward cap, return 0
+        if (alreadyClaimedForEngine >= maxRewardsForEngine) {
+            return 0;
+        }
+        
+        // Calculate daily reward: (cumulativeCost * maxRewardCapPercentage / 405 days) * (1 + hashPower%)
+        // Formula: ((cumulativeCost * maxRewardCapPercentage / 100) / 405) * (100 + hashPower) / 100
+        uint256 dailyRewardBase = (cumulativeCost * engine.maxRewardCapPercentage) / (405 * 100); // Percentage divided by 405 days
         uint256 dailyReward = (dailyRewardBase * (100 + engine.hashPower)) / 100; // Apply hashPower multiplier
         
-        return dailyReward * daysPassed;
+        uint256 calculatedRewards = dailyReward * rewardableDays;
+        
+        // Cap the rewards to not exceed maximum total for this engine
+        uint256 remainingRewardsAllowed = maxRewardsForEngine - alreadyClaimedForEngine;
+        uint256 finalRewards = calculatedRewards > remainingRewardsAllowed ? remainingRewardsAllowed : calculatedRewards;
+        
+        return finalRewards;
     }
     
     /**
-     * @dev Get user account information
+     * @dev Get user account basic information (excluding mapping)
      * @param user User address
-     * @return User account details
+     * @return isRegistered User registration status
+     * @return referrer User's referrer address
+     * @return userTotalReferrals Total referrals made by user
+     * @return userTotalReferralRewards Total referral rewards earned
+     * @return currentEngine Current engine ID
+     * @return engineStartTime When current engine was activated
+     * @return lastClaimTime Last time rewards were claimed
+     * @return userTotalRewardsClaimed Total rewards claimed by user
      */
-    function getUserAccount(address user) external view returns (UserAccount memory) {
-        return userAccounts[user];
+    function getUserAccountInfo(address user) external view returns (
+        bool isRegistered,
+        address referrer,
+        uint256 userTotalReferrals,
+        uint256 userTotalReferralRewards,
+        uint256 currentEngine,
+        uint256 engineStartTime,
+        uint256 lastClaimTime,
+        uint256 userTotalRewardsClaimed
+    ) {
+        UserAccount storage account = userAccounts[user];
+        return (
+            account.isRegistered,
+            account.referrer,
+            account.totalReferrals,
+            account.totalReferralRewards,
+            account.currentEngine,
+            account.engineStartTime,
+            account.lastClaimTime,
+            account.totalRewardsClaimed
+        );
+    }
+    
+    /**
+     * @dev Get total rewards claimed for a specific engine for a user
+     * @param user User address
+     * @param engineId Engine ID to check (1-10)
+     * @return Total rewards claimed for the specified engine
+     */
+    function getUserEngineRewardsClaimed(address user, uint256 engineId) external view returns (uint256) {
+        require(engineId >= 1 && engineId < engineCount, "Invalid engine ID");
+        return userAccounts[user].totalRewardsClaimedPerEngine[engineId];
+    }
+    
+    /**
+     * @dev Get reward cap status for a specific engine for a user
+     * @param user User address
+     * @param engineId Engine ID to check (1-10)
+     * @return maxRewards Maximum rewards allowed (engine's percentage of cost)
+     * @return claimedRewards Total rewards already claimed
+     * @return remainingRewards Remaining rewards available
+     * @return isCapReached Whether reward cap has been reached
+     * @return capPercentage The reward cap percentage for this engine
+     */
+    function getUserEngineCapStatus(address user, uint256 engineId) external view returns (
+        uint256 maxRewards,
+        uint256 claimedRewards,
+        uint256 remainingRewards,
+        bool isCapReached,
+        uint256 capPercentage
+    ) {
+        require(engineId >= 1 && engineId < engineCount, "Invalid engine ID");
+        
+        Engine storage engine = engines[engineId];
+        uint256 cumulativeCost = getCumulativeCost(engineId);
+        capPercentage = engine.maxRewardCapPercentage;
+        maxRewards = (cumulativeCost * capPercentage) / 100;
+        claimedRewards = userAccounts[user].totalRewardsClaimedPerEngine[engineId];
+        
+        if (claimedRewards >= maxRewards) {
+            remainingRewards = 0;
+            isCapReached = true;
+        } else {
+            remainingRewards = maxRewards - claimedRewards;
+            isCapReached = false;
+        }
+    }
+    
+    /**
+     * @dev Get comprehensive reward status for a user across all engines
+     * @param user User address
+     * @return engineIds Array of engine IDs (1-10)
+     * @return daysRewarded Array of days rewarded for each engine
+     * @return maxDays Array of maximum reward days for each engine
+     * @return rewardsClaimed Array of rewards claimed for each engine
+     * @return maxRewardsAllowed Array of maximum rewards allowed (450% cap)
+     * @return isTimeCapReached Array indicating if time cap (405 days) reached
+     * @return isRewardCapReached Array indicating if reward cap (450%) reached
+     */
+    function getUserRewardStatus(address user) external view returns (
+        uint256[] memory engineIds,
+        uint256[] memory daysRewarded,
+        uint256[] memory maxDays,
+        uint256[] memory rewardsClaimed,
+        uint256[] memory maxRewardsAllowed,
+        bool[] memory isTimeCapReached,
+        bool[] memory isRewardCapReached
+    ) {
+        // Return data for engines 1 to 10
+        uint256 engineRange = engineCount - 1; // Exclude engine 0
+        engineIds = new uint256[](engineRange);
+        daysRewarded = new uint256[](engineRange);
+        maxDays = new uint256[](engineRange);
+        rewardsClaimed = new uint256[](engineRange);
+        maxRewardsAllowed = new uint256[](engineRange);
+        isTimeCapReached = new bool[](engineRange);
+        isRewardCapReached = new bool[](engineRange);
+        
+        UserAccount storage account = userAccounts[user];
+        
+        for (uint256 i = 1; i < engineCount; i++) {
+            uint256 index = i - 1; // Adjust for array indexing
+            engineIds[index] = i;
+            daysRewarded[index] = account.totalDaysRewarded[i];
+            maxDays[index] = engines[i].maxRewardCapDays;
+            rewardsClaimed[index] = account.totalRewardsClaimedPerEngine[i];
+            
+            uint256 cumulativeCost = getCumulativeCost(i);
+            maxRewardsAllowed[index] = (cumulativeCost * engines[i].maxRewardCapPercentage) / 100;
+            
+            isTimeCapReached[index] = daysRewarded[index] >= maxDays[index];
+            isRewardCapReached[index] = rewardsClaimed[index] >= maxRewardsAllowed[index];
+        }
+    }
+    
+    /**
+     * @dev Get total days rewarded for a specific engine for a user
+     * @param user User address
+     * @param engineId Engine ID to check (1-10)
+     * @return Total days rewarded for the specified engine
+     */
+    function getUserEngineRewardedDays(address user, uint256 engineId) external view returns (uint256) {
+        require(engineId >= 1 && engineId < engineCount, "Invalid engine ID");
+        return userAccounts[user].totalDaysRewarded[engineId];
+    }
+    
+    /**
+     * @dev Check if a user can purchase or upgrade to a specific engine
+     * @param user User address
+     * @param targetEngine Target engine ID (1-10)
+     * @return canPurchase Whether the user can purchase/upgrade
+     * @return cost Cost in AVAX to purchase/upgrade
+     * @return reason Reason if cannot purchase
+     */
+    function canUserPurchaseEngine(address user, uint256 targetEngine) external view returns (
+        bool canPurchase,
+        uint256 cost,
+        string memory reason
+    ) {
+        if (!userAccounts[user].isRegistered) {
+            return (false, 0, "User not registered");
+        }
+        
+        if (targetEngine < 1 || targetEngine >= engineCount) {
+            return (false, 0, "Invalid engine ID");
+        }
+        
+        if (!engines[targetEngine].isActive) {
+            return (false, 0, "Engine not active");
+        }
+        
+        UserAccount storage account = userAccounts[user];
+        
+        if (targetEngine <= account.currentEngine) {
+            return (false, 0, "Target engine must be higher than current");
+        }
+        
+        if (isBlacklisted[user]) {
+            return (false, 0, "User is blacklisted");
+        }
+        
+        // Calculate cost
+        uint256 upgradeCost;
+        if (account.currentEngine == 0) {
+            upgradeCost = getCumulativeCost(targetEngine);
+        } else {
+            upgradeCost = calculateUpgradeCost(account.currentEngine, targetEngine);
+        }
+        
+        return (true, upgradeCost, "Can purchase");
+    }
+    
+    /**
+     * @dev Get user's engine ownership and purchase options
+     * @param user User address
+     * @return hasEngine Whether user owns an engine
+     * @return currentEngineId Current engine ID (0 if no engine)
+     * @return availableEngines Array of engine IDs user can purchase
+     * @return purchaseCosts Array of costs for each available engine
+     */
+    function getUserEngineOptions(address user) external view returns (
+        bool hasEngine,
+        uint256 currentEngineId,
+        uint256[] memory availableEngines,
+        uint256[] memory purchaseCosts
+    ) {
+        UserAccount storage account = userAccounts[user];
+        hasEngine = account.currentEngine > 0;
+        currentEngineId = account.currentEngine;
+        
+        if (!account.isRegistered || isBlacklisted[user]) {
+            // Return empty arrays if user can't purchase
+            availableEngines = new uint256[](0);
+            purchaseCosts = new uint256[](0);
+            return (hasEngine, currentEngineId, availableEngines, purchaseCosts);
+        }
+        
+        // Count available engines
+        uint256 availableCount = 0;
+        for (uint256 i = account.currentEngine + 1; i < engineCount; i++) {
+            if (engines[i].isActive) {
+                availableCount++;
+            }
+        }
+        
+        // Populate arrays
+        availableEngines = new uint256[](availableCount);
+        purchaseCosts = new uint256[](availableCount);
+        
+        uint256 index = 0;
+        for (uint256 i = account.currentEngine + 1; i < engineCount; i++) {
+            if (engines[i].isActive) {
+                availableEngines[index] = i;
+                
+                // Calculate cost
+                if (account.currentEngine == 0) {
+                    purchaseCosts[index] = getCumulativeCost(i);
+                } else {
+                    purchaseCosts[index] = calculateUpgradeCost(account.currentEngine, i);
+                }
+                
+                index++;
+            }
+        }
     }
     
     /**
@@ -723,6 +1045,11 @@ contract NodeBoosterV1 is
      * @param user User address
      * @return currentEngine Current engine ID
      * @return engineStartTime When current engine was activated
+     * @return lastClaimTime Last time rewards were claimed
+     * @return daysRewarded Total days rewarded for current engine
+     * @return remainingDays Remaining days available for rewards
+     * @return rewardsClaimed Total rewards claimed for current engine
+     * @return maxRewardsAllowed Maximum rewards allowed for current engine (engine's percentage cap)
      * @return pendingRewards Total stored pending rewards
      * @return currentRewards Currently accumulating rewards
      * @return totalClaimable Total claimable rewards
@@ -730,6 +1057,11 @@ contract NodeBoosterV1 is
     function getUserEngineInfo(address user) external view returns (
         uint256 currentEngine,
         uint256 engineStartTime,
+        uint256 lastClaimTime,
+        uint256 daysRewarded,
+        uint256 remainingDays,
+        uint256 rewardsClaimed,
+        uint256 maxRewardsAllowed,
         uint256 pendingRewards,
         uint256 currentRewards,
         uint256 totalClaimable
@@ -737,6 +1069,20 @@ contract NodeBoosterV1 is
         UserAccount storage account = userAccounts[user];
         currentEngine = account.currentEngine;
         engineStartTime = account.engineStartTime;
+        lastClaimTime = account.lastClaimTime;
+        
+        if (currentEngine > 0) {
+            // Calculate days rewarded and remaining for current engine
+            daysRewarded = account.totalDaysRewarded[currentEngine];
+            Engine storage engine = engines[currentEngine];
+            remainingDays = engine.maxRewardCapDays > daysRewarded ? 
+                engine.maxRewardCapDays - daysRewarded : 0;
+            
+            // Calculate reward cap information
+            rewardsClaimed = account.totalRewardsClaimedPerEngine[currentEngine];
+            uint256 cumulativeCost = getCumulativeCost(currentEngine);
+            maxRewardsAllowed = (cumulativeCost * engines[currentEngine].maxRewardCapPercentage) / 100;
+        }
         
         // Calculate total pending rewards from array
         pendingRewards = 0;
@@ -793,23 +1139,23 @@ contract NodeBoosterV1 is
     
     /**
      * @dev Get engine configuration
-     * @param _engineId Engine ID
+     * @param _engineId Engine ID (1-10)
      * @return Engine configuration details
      */
     function getEngine(uint256 _engineId) external view returns (Engine memory) {
-        require(_engineId < engineCount, "NodeBooster: Engine does not exist");
+        require(_engineId >= 1 && _engineId < engineCount, "NodeBooster: Invalid engine ID");
         return engines[_engineId];
     }
     
     /**
-     * @dev Get all active engines
+     * @dev Get all active purchasable engines (1-10)
      * @return engineIds Array of active engine IDs
      * @return activeEngines Array of active engine configurations
      */
     function getActiveEngines() external view returns (uint256[] memory engineIds, Engine[] memory activeEngines) {
-        // Count active engines first
+        // Count active engines first (engines 1-10 only)
         uint256 activeCount = 0;
-        for (uint256 i = 0; i < engineCount; i++) {
+        for (uint256 i = 1; i < engineCount; i++) {
             if (engines[i].isActive) {
                 activeCount++;
             }
@@ -821,7 +1167,7 @@ contract NodeBoosterV1 is
         
         // Populate arrays
         uint256 index = 0;
-        for (uint256 i = 0; i < engineCount; i++) {
+        for (uint256 i = 1; i < engineCount; i++) {
             if (engines[i].isActive) {
                 engineIds[index] = i;
                 activeEngines[index] = engines[i];
@@ -984,96 +1330,106 @@ contract NodeBoosterV1 is
      * @dev Initialize default engines (called during contract initialization)
      */
     function _initializeDefaultEngines() internal {
-        // Engine 0: Starter
-        engines[0] = Engine({
+        // Engine 1: Starter
+        engines[1] = Engine({
             isActive: true,
-            priceInAvax: 2 * 10**18, // 1 AVAX
+            priceInAvax: 2 * 10**18, // 2 AVAX
             hashPower: 1,
-            maxRewardCapDays:405,
+            maxRewardCapDays: 405,
+            maxRewardCapPercentage: 450, // 450%
             name: "Starter Engine"
         });
         
-        // Engine 1: Basic
-        engines[1] = Engine({
+        // Engine 2: Basic
+        engines[2] = Engine({
             isActive: true,
-            priceInAvax: 4 * 10**18, // 5 AVAX
+            priceInAvax: 4 * 10**18, // 4 AVAX
             hashPower: 2,
-            maxRewardCapDays:405,
+            maxRewardCapDays: 405,
+            maxRewardCapPercentage: 450, // 450%
             name: "Basic Engine"
         });
         
-        // Engine 2: Standard
-        engines[2] = Engine({
+        // Engine 3: Standard
+        engines[3] = Engine({
             isActive: true,
-            priceInAvax: 8 * 10**18, // 10 AVAX
+            priceInAvax: 8 * 10**18, // 8 AVAX
             hashPower: 4,
-            maxRewardCapDays:405,
+            maxRewardCapDays: 405,
+            maxRewardCapPercentage: 450, // 450%
             name: "Standard Engine"
         });
         
-        // Engine 3: Advanced
-        engines[3] = Engine({
+        // Engine 4: Advanced
+        engines[4] = Engine({
             isActive: true,
-            priceInAvax: 12 * 10**18, // 25 AVAX
+            priceInAvax: 12 * 10**18, // 12 AVAX
             hashPower: 6,
             maxRewardCapDays: 405,
+            maxRewardCapPercentage: 450, // 450%
             name: "Advanced Engine"
         });
         
-        // Engine 4: Professional
-        engines[4] = Engine({
+        // Engine 5: Professional
+        engines[5] = Engine({
             isActive: true,
-            priceInAvax: 20 * 10**18, // 50 AVAX
+            priceInAvax: 20 * 10**18, // 20 AVAX
             hashPower: 8,
             maxRewardCapDays: 405,
+            maxRewardCapPercentage: 450, // 450%
             name: "Professional Engine"
         });
         
-        // Engine 5: Expert
-        engines[5] = Engine({
+        // Engine 6: Expert
+        engines[6] = Engine({
             isActive: true,
-            priceInAvax: 36 * 10**18, // 100 AVAX
+            priceInAvax: 36 * 10**18, // 36 AVAX
             hashPower: 10,
             maxRewardCapDays: 405,
+            maxRewardCapPercentage: 450, // 450%
             name: "Expert Engine"
         });
         
-        // Engine 6: Master
-        engines[6] = Engine({
+        // Engine 7: Master
+        engines[7] = Engine({
             isActive: true,
-            priceInAvax: 75 * 10**18, // 200 AVAX
+            priceInAvax: 75 * 10**18, // 75 AVAX
             hashPower: 12,
             maxRewardCapDays: 405,
+            maxRewardCapPercentage: 450, // 450%
             name: "Master Engine"
         });
         
-        // Engine 7: Elite
-        engines[7] = Engine({
+        // Engine 8: Elite
+        engines[8] = Engine({
             isActive: true,
-            priceInAvax: 115 * 10**18, // 500 AVAX
+            priceInAvax: 115 * 10**18, // 115 AVAX
             hashPower: 14,
             maxRewardCapDays: 405,
+            maxRewardCapPercentage: 450, // 450%
             name: "Elite Engine"
         });
         
-        // Engine 8: Supreme
-        engines[8] = Engine({
+        // Engine 9: Supreme
+        engines[9] = Engine({
             isActive: true,
-            priceInAvax: 195 * 10**18, // 1000 AVAX
+            priceInAvax: 195 * 10**18, // 195 AVAX
             hashPower: 16,
             maxRewardCapDays: 405,
+            maxRewardCapPercentage: 450, // 450%
             name: "Supreme Engine"
         });
         
-        // Engine 9: Ultimate
-        engines[9] = Engine({
+        // Engine 10: Ultimate
+        engines[10] = Engine({
             isActive: true,
-            priceInAvax: 310 * 10**18, // 2000 AVAX
+            priceInAvax: 310 * 10**18, // 310 AVAX
             hashPower: 18,
             maxRewardCapDays: 405,
+            maxRewardCapPercentage: 450, // 450%
             name: "Ultimate Engine"
         });
         
-        engineCount = 10;
+        engineCount = 11; // 0 (no engine) + engines 1-10
     }
 }

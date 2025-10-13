@@ -73,24 +73,26 @@ describe("NodeBooster V1", function () {
             expect(await nodeBooster.version()).to.equal("1.0.0");
         });
         
-        it("Should initialize with 10 default engines", async function () {
-            expect(await nodeBooster.engineCount()).to.equal(10);
+        it("Should initialize with 11 engines (0-10, where 0 is no engine)", async function () {
+            expect(await nodeBooster.engineCount()).to.equal(11);
             
-            // Check first engine
-            const engine0 = await nodeBooster.getEngine(0);
-            expect(engine0.name).to.equal("Starter Engine");
-            expect(engine0.priceInAvax).to.equal(ethers.parseEther("2"));
-            expect(engine0.hashPower).to.equal(1);
-            expect(engine0.maxRewardCapDays).to.equal(405);
-            expect(engine0.isActive).to.be.true;
+            // Check first purchasable engine (engine 1)
+            const engine1 = await nodeBooster.getEngine(1);
+            expect(engine1.name).to.equal("Starter Engine");
+            expect(engine1.priceInAvax).to.equal(ethers.parseEther("2"));
+            expect(engine1.hashPower).to.equal(1);
+            expect(engine1.maxRewardCapDays).to.equal(405);
+            expect(engine1.maxRewardCapPercentage).to.equal(450); // 450%
+            expect(engine1.isActive).to.be.true;
             
-            // Check last engine
-            const engine9 = await nodeBooster.getEngine(9);
-            expect(engine9.name).to.equal("Ultimate Engine");
-            expect(engine9.priceInAvax).to.equal(ethers.parseEther("310"));
-            expect(engine9.hashPower).to.equal(18);
-            expect(engine9.maxRewardCapDays).to.equal(405);
-            expect(engine9.isActive).to.be.true;
+            // Check last engine (engine 10)
+            const engine10 = await nodeBooster.getEngine(10);
+            expect(engine10.name).to.equal("Ultimate Engine");
+            expect(engine10.priceInAvax).to.equal(ethers.parseEther("310"));
+            expect(engine10.hashPower).to.equal(18);
+            expect(engine10.maxRewardCapDays).to.equal(405);
+            expect(engine10.maxRewardCapPercentage).to.equal(450); // 450%
+            expect(engine10.isActive).to.be.true;
         });
         
         it("Should have correct constants", async function () {
@@ -102,7 +104,7 @@ describe("NodeBooster V1", function () {
     });
     
     describe("User Registration", function () {
-        it("Should register user without referrer", async function () {
+        it("Should register user without referrer and no engine initially", async function () {
             // Approve USDC spending
             await usdcToken.connect(user1).approve(await nodeBooster.getAddress(), REGISTRATION_FEE);
             
@@ -110,16 +112,18 @@ describe("NodeBooster V1", function () {
             await expect(nodeBooster.connect(user1).register(ethers.ZeroAddress))
                 .to.emit(nodeBooster, "UserRegistered");
             
-            // Check user account
-            const userAccount = await nodeBooster.getUserAccount(user1.address);
-            expect(userAccount.isRegistered).to.be.true;
-            expect(userAccount.referrer).to.equal(owner.address); // Now uses default referrer
-            expect(userAccount.totalReferrals).to.equal(0);
-            expect(userAccount.totalReferralRewards).to.equal(0);
-            expect(userAccount.currentEngine).to.equal(0); // Started with engine 0
-            expect(userAccount.pendingRewards.length).to.equal(0); // No pending rewards initially
-            expect(userAccount.totalRewardsClaimed).to.equal(0);
-            expect(userAccount.engineStartTime).to.be.gt(0); // Should be set
+            // Check user account using new function
+            const [isRegistered, referrer, totalReferrals, totalReferralRewards, currentEngine, engineStartTime, lastClaimTime, totalRewardsClaimed] = 
+                await nodeBooster.getUserAccountInfo(user1.address);
+            
+            expect(isRegistered).to.be.true;
+            expect(referrer).to.equal(owner.address); // Now uses default referrer
+            expect(totalReferrals).to.equal(0);
+            expect(totalReferralRewards).to.equal(0);
+            expect(currentEngine).to.equal(0); // No engine initially
+            expect(engineStartTime).to.equal(0); // No engine start time
+            expect(lastClaimTime).to.equal(0);
+            expect(totalRewardsClaimed).to.equal(0);
             
             // Check AVAX0 balance
             expect(await avax0Token.balanceOf(user1.address)).to.equal(AVAX0_REWARD);
@@ -145,9 +149,9 @@ describe("NodeBooster V1", function () {
                 .and.to.emit(nodeBooster, "ReferralRewardPaid");
             
             // Check referrer account
-            const referrerAccount = await nodeBooster.getUserAccount(referrer.address);
-            expect(referrerAccount.totalReferrals).to.equal(1);
-            expect(referrerAccount.totalReferralRewards).to.equal(referralReward);
+            const [, , referrerTotalReferrals, referrerTotalReferralRewards] = await nodeBooster.getUserAccountInfo(referrer.address);
+            expect(referrerTotalReferrals).to.equal(1);
+            expect(referrerTotalReferralRewards).to.equal(referralReward);
             
             // Check referrer USDC balance (should have received referral reward)
             const expectedBalance = ethers.parseUnits("1000", 6) - REGISTRATION_FEE + referralReward;
@@ -201,48 +205,59 @@ describe("NodeBooster V1", function () {
                 .to.emit(nodeBooster, "UserRegistered");
             
             // Check that default referrer was used
-            const userAccount = await nodeBooster.getUserAccount(user1.address);
-            expect(userAccount.referrer).to.equal(defaultReferrer);
+            const [, userReferrer] = await nodeBooster.getUserAccountInfo(user1.address);
+            expect(userReferrer).to.equal(defaultReferrer);
         });
     });
     
     describe("Engine Management", function () {
-        it("Should allow owner to configure new engine", async function () {
-            const engineId = 10;
+        it("Should allow owner to configure new engine with reward cap percentage", async function () {
+            const engineId = 11;
             const name = "Custom Engine";
             const priceInAvax = ethers.parseEther("50");
             const hashPower = 5000;
             const maxRewardCapDays = 120;
+            const maxRewardCapPercentage = 600; // 600%
             const isActive = true;
             
-            await expect(nodeBooster.configureEngine(engineId, name, priceInAvax, hashPower, maxRewardCapDays, isActive))
+            await expect(nodeBooster.configureEngine(engineId, name, priceInAvax, hashPower, maxRewardCapDays, maxRewardCapPercentage, isActive))
                 .to.emit(nodeBooster, "EngineConfigured")
-                .withArgs(engineId, name, priceInAvax, hashPower, maxRewardCapDays, isActive);
+                .withArgs(engineId, name, priceInAvax, hashPower, maxRewardCapDays, maxRewardCapPercentage, isActive);
             
             const engine = await nodeBooster.getEngine(engineId);
             expect(engine.name).to.equal(name);
             expect(engine.priceInAvax).to.equal(priceInAvax);
             expect(engine.hashPower).to.equal(hashPower);
             expect(engine.maxRewardCapDays).to.equal(maxRewardCapDays);
+            expect(engine.maxRewardCapPercentage).to.equal(maxRewardCapPercentage);
             expect(engine.isActive).to.equal(isActive);
             
-            expect(await nodeBooster.engineCount()).to.equal(11);
+            expect(await nodeBooster.engineCount()).to.equal(12);
         });
         
         it("Should not allow non-owner to configure engine", async function () {
-            await expect(nodeBooster.connect(user1).configureEngine(10, "Test", ethers.parseEther("1"), 100, 30, true))
+            await expect(nodeBooster.connect(user1).configureEngine(11, "Test", ethers.parseEther("1"), 100, 30, 450, true))
                 .to.be.revertedWithCustomError(nodeBooster, "OwnableUnauthorizedAccount");
         });
         
         it("Should validate engine parameters", async function () {
-            await expect(nodeBooster.configureEngine(10, "", ethers.parseEther("1"), 100, 30, true))
+            await expect(nodeBooster.configureEngine(11, "", ethers.parseEther("1"), 100, 30, 450, true))
                 .to.be.revertedWith("NodeBooster: Engine name cannot be empty");
             
-            await expect(nodeBooster.configureEngine(10, "Test", 0, 100, 30, true))
+            await expect(nodeBooster.configureEngine(11, "Test", 0, 100, 30, 450, true))
                 .to.be.revertedWith("NodeBooster: Price must be greater than 0");
             
-            await expect(nodeBooster.configureEngine(50, "Test", ethers.parseEther("1"), 100, 30, true))
-                .to.be.revertedWith("NodeBooster: Engine ID exceeds maximum");
+            await expect(nodeBooster.configureEngine(11, "Test", ethers.parseEther("1"), 0, 30, 450, true))
+                .to.be.revertedWith("NodeBooster: Hash power must be greater than 0");
+            
+            await expect(nodeBooster.configureEngine(11, "Test", ethers.parseEther("1"), 100, 0, 450, true))
+                .to.be.revertedWith("NodeBooster: Reward cap days must be greater than 0");
+            
+            await expect(nodeBooster.configureEngine(11, "Test", ethers.parseEther("1"), 100, 30, 0, true))
+                .to.be.revertedWith("NodeBooster: Reward cap percentage must be greater than 0");
+            
+            await expect(nodeBooster.configureEngine(50, "Test", ethers.parseEther("1"), 100, 30, 450, true))
+                .to.be.revertedWith("NodeBooster: Invalid engine ID");
         });
     });
     
@@ -286,9 +301,9 @@ describe("NodeBooster V1", function () {
             await expect(nodeBooster.connect(user1).register(ethers.ZeroAddress))
                 .to.emit(nodeBooster, "UserRegistered");
             
-            const userAccount = await nodeBooster.getUserAccount(user1.address);
+            const [, userReferrer] = await nodeBooster.getUserAccountInfo(user1.address);
             const defaultReferrer = await nodeBooster.getDefaultReferrer();
-            expect(userAccount.referrer).to.equal(defaultReferrer);
+            expect(userReferrer).to.equal(defaultReferrer);
         });
     });
     
@@ -342,9 +357,9 @@ describe("NodeBooster V1", function () {
                 .to.emit(nodeBooster, "UserRegistered");
             
             // Check that default referrer was used instead of blacklisted one
-            const userAccount = await nodeBooster.getUserAccount(user2.address);
+            const [, userReferrer] = await nodeBooster.getUserAccountInfo(user2.address);
             const defaultReferrer = await nodeBooster.getDefaultReferrer();
-            expect(userAccount.referrer).to.equal(defaultReferrer);
+            expect(userReferrer).to.equal(defaultReferrer);
         });
         
         it("Should allow batch blacklisting", async function () {
@@ -473,33 +488,49 @@ describe("NodeBooster V1", function () {
             await nodeBooster.connect(user1).register(ethers.ZeroAddress);
         });
         
+        it("Should not allow claiming rewards without an engine", async function () {
+            await expect(nodeBooster.connect(user1).claimRewards())
+                .to.be.revertedWith("No engine");
+        });
+        
         it("Should calculate cumulative cost correctly", async function () {
-            // Engine 0: 2 AVAX, Engine 1: 4 AVAX, cumulative for engine 1 = 6 AVAX
-            expect(await nodeBooster.getCumulativeCost(0)).to.equal(ethers.parseEther("2"));
-            expect(await nodeBooster.getCumulativeCost(1)).to.equal(ethers.parseEther("6"));
-            expect(await nodeBooster.getCumulativeCost(2)).to.equal(ethers.parseEther("14")); // 2+4+8
+            // Engine 1: 2 AVAX, Engine 2: 4 AVAX, cumulative for engine 2 = 6 AVAX
+            expect(await nodeBooster.getCumulativeCost(1)).to.equal(ethers.parseEther("2"));
+            expect(await nodeBooster.getCumulativeCost(2)).to.equal(ethers.parseEther("6"));
+            expect(await nodeBooster.getCumulativeCost(3)).to.equal(ethers.parseEther("14")); // 2+4+8
         });
         
-        it("Should calculate upgrade cost correctly", async function () {
-            // From engine 0 to 1: just engine 1 cost = 4 AVAX
-            expect(await nodeBooster.calculateUpgradeCost(0, 1)).to.equal(ethers.parseEther("4"));
-            // From engine 0 to 2: engine 1 + engine 2 = 4 + 8 = 12 AVAX
-            expect(await nodeBooster.calculateUpgradeCost(0, 2)).to.equal(ethers.parseEther("12"));
+        it("Should calculate upgrade cost correctly for first purchase", async function () {
+            // From no engine (0) to engine 1: cumulative cost = 2 AVAX
+            expect(await nodeBooster.calculateUpgradeCost(0, 1)).to.equal(ethers.parseEther("2"));
+            // From no engine (0) to engine 2: cumulative cost = 6 AVAX
+            expect(await nodeBooster.calculateUpgradeCost(0, 2)).to.equal(ethers.parseEther("6"));
         });
         
-        it("Should upgrade engine successfully", async function () {
+        it("Should calculate upgrade cost correctly for engine upgrades", async function () {
+            // From engine 1 to 2: just engine 2 cost = 4 AVAX
+            expect(await nodeBooster.calculateUpgradeCost(1, 2)).to.equal(ethers.parseEther("4"));
+            // From engine 1 to 3: engine 2 + engine 3 = 4 + 8 = 12 AVAX
+            expect(await nodeBooster.calculateUpgradeCost(1, 3)).to.equal(ethers.parseEther("12"));
+        });
+        
+        it("Should purchase first engine successfully", async function () {
             const upgradeCost = await nodeBooster.calculateUpgradeCost(0, 1);
             
             await expect(nodeBooster.connect(user1).upgradeEngine(1, { value: upgradeCost }))
                 .to.emit(nodeBooster, "EngineUpgraded")
                 .withArgs(user1.address, 0, 1, 0); // No pending rewards initially
             
-            const userAccount = await nodeBooster.getUserAccount(user1.address);
-            expect(userAccount.currentEngine).to.equal(1);
-            expect(userAccount.engineStartTime).to.be.gt(0);
+            const [, , , , currentEngine, engineStartTime] = await nodeBooster.getUserAccountInfo(user1.address);
+            expect(currentEngine).to.equal(1);
+            expect(engineStartTime).to.be.gt(0);
         });
         
-        it("Should calculate rewards correctly after time passes", async function () {
+        it("Should calculate rewards correctly after purchasing engine and time passes", async function () {
+            // First purchase an engine
+            const upgradeCost = await nodeBooster.calculateUpgradeCost(0, 1);
+            await nodeBooster.connect(user1).upgradeEngine(1, { value: upgradeCost });
+            
             // Fast forward time by 1 day
             await ethers.provider.send("evm_increaseTime", [24 * 60 * 60]);
             await ethers.provider.send("evm_mine");
@@ -507,15 +538,19 @@ describe("NodeBooster V1", function () {
             const pendingRewards = await nodeBooster.calculatePendingRewards(user1.address);
             expect(pendingRewards).to.be.gt(0);
             
-            // Formula: (cumulativeCost * 450% / 405 days) * (1 + hashPower%)
-            // Engine 0: cumulative cost = 2 AVAX, hashPower = 1%
-            // Daily reward = (2 * 4.5 / 405) * (1 + 0.01) = 0.0222 * 1.01 = 0.0224 AVAX
+            // Formula: (cumulativeCost * maxRewardCapPercentage / 405 days) * (1 + hashPower%)
+            // Engine 1: cumulative cost = 2 AVAX, hashPower = 1%, maxRewardCapPercentage = 450%
+            // Daily reward = (2 * 450 / 405 / 100) * (1 + 0.01) = 0.0222 * 1.01 = 0.0224 AVAX
             const baseDailyReward = (ethers.parseEther("2") * 450n) / (405n * 100n);
             const expectedDaily = (baseDailyReward * (100n + 1n)) / 100n; // 1% hashPower
             expect(pendingRewards).to.be.closeTo(expectedDaily, ethers.parseEther("0.001"));
         });
         
-        it("Should claim rewards successfully", async function () {
+        it("Should claim rewards successfully after purchasing engine", async function () {
+            // First purchase an engine
+            const upgradeCost = await nodeBooster.calculateUpgradeCost(0, 1);
+            await nodeBooster.connect(user1).upgradeEngine(1, { value: upgradeCost });
+            
             // Fast forward time by 1 day
             await ethers.provider.send("evm_increaseTime", [24 * 60 * 60]);
             await ethers.provider.send("evm_mine");
@@ -530,8 +565,8 @@ describe("NodeBooster V1", function () {
             const finalBalance = await avax0Token.balanceOf(user1.address);
             expect(finalBalance - initialBalance).to.equal(pendingRewards);
             
-            const userAccount = await nodeBooster.getUserAccount(user1.address);
-            expect(userAccount.totalRewardsClaimed).to.equal(pendingRewards);
+            const [, , , , , , , totalRewardsClaimed] = await nodeBooster.getUserAccountInfo(user1.address);
+            expect(totalRewardsClaimed).to.equal(pendingRewards);
             
             // Check that all pending rewards are marked as completed
             const totalPending = await nodeBooster.getTotalPendingRewards(user1.address);
@@ -539,34 +574,42 @@ describe("NodeBooster V1", function () {
         });
         
         it("Should preserve pending rewards during upgrade", async function () {
+            // First purchase an engine
+            const firstUpgradeCost = await nodeBooster.calculateUpgradeCost(0, 1);
+            await nodeBooster.connect(user1).upgradeEngine(1, { value: firstUpgradeCost });
+            
             // Fast forward time by 1 day
             await ethers.provider.send("evm_increaseTime", [24 * 60 * 60]);
             await ethers.provider.send("evm_mine");
             
             const pendingBefore = await nodeBooster.calculatePendingRewards(user1.address);
-            const upgradeCost = await nodeBooster.calculateUpgradeCost(0, 1);
+            const upgradeCost = await nodeBooster.calculateUpgradeCost(1, 2);
             
-            await expect(nodeBooster.connect(user1).upgradeEngine(1, { value: upgradeCost }))
+            await expect(nodeBooster.connect(user1).upgradeEngine(2, { value: upgradeCost }))
                 .to.emit(nodeBooster, "EngineUpgraded")
-                .withArgs(user1.address, 0, 1, pendingBefore);
+                .withArgs(user1.address, 1, 2, pendingBefore);
             
             // Check that pending rewards are stored in the array
             const totalPending = await nodeBooster.getTotalPendingRewards(user1.address);
             expect(totalPending).to.equal(pendingBefore);
             
-            const userAccount = await nodeBooster.getUserAccount(user1.address);
-            expect(userAccount.currentEngine).to.equal(1);
+            const [, , , , currentEngine] = await nodeBooster.getUserAccountInfo(user1.address);
+            expect(currentEngine).to.equal(2);
         });
         
         it("Should get user engine info correctly", async function () {
-            const [currentEngine, engineStartTime, pendingRewards, currentRewards, totalClaimable] = 
-                await nodeBooster.getUserEngineInfo(user1.address);
+            const engineInfo = await nodeBooster.getUserEngineInfo(user1.address);
             
-            expect(currentEngine).to.equal(0);
-            expect(engineStartTime).to.be.gt(0);
-            expect(pendingRewards).to.equal(0); // No stored pending rewards initially
-            expect(currentRewards).to.equal(0); // No time passed
-            expect(totalClaimable).to.equal(0);
+            expect(engineInfo[0]).to.equal(0); // currentEngine
+            expect(engineInfo[1]).to.equal(0); // engineStartTime (no engine)
+            expect(engineInfo[2]).to.equal(0); // lastClaimTime
+            expect(engineInfo[3]).to.equal(0); // daysRewarded
+            expect(engineInfo[4]).to.equal(0); // remainingDays
+            expect(engineInfo[5]).to.equal(0); // rewardsClaimed
+            expect(engineInfo[6]).to.equal(0); // maxRewardsAllowed
+            expect(engineInfo[7]).to.equal(0); // pendingRewards
+            expect(engineInfo[8]).to.equal(0); // currentRewards
+            expect(engineInfo[9]).to.equal(0); // totalClaimable
         });
         
         it("Should revert engine upgrade with insufficient payment", async function () {
@@ -577,26 +620,31 @@ describe("NodeBooster V1", function () {
                 .to.be.revertedWith("Insufficient AVAX payment");
         });
         
-        it("Should revert upgrade to lower engine", async function () {
+        it("Should revert upgrade to lower or same engine", async function () {
             const upgradeCost = await nodeBooster.calculateUpgradeCost(0, 1);
             await nodeBooster.connect(user1).upgradeEngine(1, { value: upgradeCost });
             
-            await expect(nodeBooster.connect(user1).upgradeEngine(0, { value: 0 }))
+            // Try to "upgrade" to same engine
+            await expect(nodeBooster.connect(user1).upgradeEngine(1, { value: 0 }))
                 .to.be.revertedWith("Target engine must be higher than current");
         });
         
         it("Should track rewards history correctly", async function () {
+            // First purchase an engine
+            const upgradeCost1 = await nodeBooster.calculateUpgradeCost(0, 1);
+            await nodeBooster.connect(user1).upgradeEngine(1, { value: upgradeCost1 });
+            
             // Fast forward time and upgrade to create a reward entry
             await ethers.provider.send("evm_increaseTime", [24 * 60 * 60]);
             await ethers.provider.send("evm_mine");
             
-            const upgradeCost = await nodeBooster.calculateUpgradeCost(0, 1);
-            await nodeBooster.connect(user1).upgradeEngine(1, { value: upgradeCost });
+            const upgradeCost2 = await nodeBooster.calculateUpgradeCost(1, 2);
+            await nodeBooster.connect(user1).upgradeEngine(2, { value: upgradeCost2 });
             
             // Check rewards history
             const rewardsHistory = await nodeBooster.getUserRewardsHistory(user1.address);
             expect(rewardsHistory.length).to.equal(1);
-            expect(rewardsHistory[0].engineId).to.equal(0);
+            expect(rewardsHistory[0].engineId).to.equal(1);
             expect(rewardsHistory[0].completed).to.be.false;
             expect(rewardsHistory[0].amount).to.be.gt(0);
             
@@ -606,20 +654,24 @@ describe("NodeBooster V1", function () {
         });
         
         it("Should handle multiple reward entries correctly", async function () {
-            // Create multiple reward entries through upgrades
-            await ethers.provider.send("evm_increaseTime", [24 * 60 * 60]); // 1 day
-            await ethers.provider.send("evm_mine");
-            
-            // Upgrade to engine 1
+            // First purchase an engine
             let upgradeCost = await nodeBooster.calculateUpgradeCost(0, 1);
             await nodeBooster.connect(user1).upgradeEngine(1, { value: upgradeCost });
             
-            await ethers.provider.send("evm_increaseTime", [48 * 60 * 60]); // 2 more days
+            // Create multiple reward entries through upgrades
+            await ethers.provider.send("evm_increaseTime", [24 * 60 * 60]); // 1 day
             await ethers.provider.send("evm_mine");
             
             // Upgrade to engine 2
             upgradeCost = await nodeBooster.calculateUpgradeCost(1, 2);
             await nodeBooster.connect(user1).upgradeEngine(2, { value: upgradeCost });
+            
+            await ethers.provider.send("evm_increaseTime", [48 * 60 * 60]); // 2 more days
+            await ethers.provider.send("evm_mine");
+            
+            // Upgrade to engine 3
+            upgradeCost = await nodeBooster.calculateUpgradeCost(2, 3);
+            await nodeBooster.connect(user1).upgradeEngine(3, { value: upgradeCost });
             
             // Should now have 2 pending reward entries
             const pendingCount = await nodeBooster.getPendingRewardsCount(user1.address);
@@ -643,6 +695,200 @@ describe("NodeBooster V1", function () {
             for (let i = 0; i < rewardsHistory.length; i++) {
                 expect(rewardsHistory[i].completed).to.be.true;
             }
+        });
+    });
+    
+    describe("Configurable Reward Cap System", function () {
+        beforeEach(async function () {
+            // Register user1 for reward cap tests
+            await usdcToken.connect(user1).approve(await nodeBooster.getAddress(), REGISTRATION_FEE);
+            await nodeBooster.connect(user1).register(ethers.ZeroAddress);
+            
+            // Purchase engine 1
+            const upgradeCost = await nodeBooster.calculateUpgradeCost(0, 1);
+            await nodeBooster.connect(user1).upgradeEngine(1, { value: upgradeCost });
+        });
+        
+        it("Should use engine's maxRewardCapPercentage in reward calculations", async function () {
+            // Configure a custom engine with different reward cap
+            await nodeBooster.configureEngine(11, "Custom Engine", ethers.parseEther("10"), 5, 405, 300, true); // 300% cap
+            
+            const engine11 = await nodeBooster.getEngine(11);
+            expect(engine11.maxRewardCapPercentage).to.equal(300);
+            
+            // Upgrade to the custom engine
+            const upgradeCost = await nodeBooster.calculateUpgradeCost(1, 11);
+            await nodeBooster.connect(user1).upgradeEngine(11, { value: upgradeCost });
+            
+            // Fast forward time by 1 day
+            await ethers.provider.send("evm_increaseTime", [24 * 60 * 60]);
+            await ethers.provider.send("evm_mine");
+            
+            const pendingRewards = await nodeBooster.calculatePendingRewards(user1.address);
+            
+            // Calculate expected reward with 300% cap instead of 450%
+            const cumulativeCost = await nodeBooster.getCumulativeCost(11);
+            const baseDailyReward = (cumulativeCost * 300n) / (405n * 100n); // 300% instead of 450%
+            const expectedDaily = (baseDailyReward * (100n + 5n)) / 100n; // 5% hashPower for custom engine
+            
+            expect(pendingRewards).to.be.closeTo(expectedDaily, ethers.parseEther("0.001"));
+        });
+        
+        it("Should enforce per-engine reward cap correctly", async function () {
+            // Get engine 1 details
+            const engine1 = await nodeBooster.getEngine(1);
+            const cumulativeCost = await nodeBooster.getCumulativeCost(1);
+            const maxRewardsAllowed = (cumulativeCost * engine1.maxRewardCapPercentage) / 100n;
+            
+            // Check initial cap status
+            const [maxRewards, claimedRewards, remainingRewards, isCapReached, capPercentage] = 
+                await nodeBooster.getUserEngineCapStatus(user1.address, 1);
+            
+            expect(maxRewards).to.equal(maxRewardsAllowed);
+            expect(claimedRewards).to.equal(0);
+            expect(remainingRewards).to.equal(maxRewardsAllowed);
+            expect(isCapReached).to.be.false;
+            expect(capPercentage).to.equal(450); // Default 450%
+        });
+        
+        it("Should stop rewarding when cap is reached", async function () {
+            // Configure a small engine with low cap for testing (use engine 11 since 1-10 are taken)
+            await nodeBooster.configureEngine(11, "Test Engine", ethers.parseEther("1"), 1, 405, 100, true); // 100% cap only
+            
+            // Upgrade to test engine
+            const upgradeCost = await nodeBooster.calculateUpgradeCost(1, 11);
+            await nodeBooster.connect(user1).upgradeEngine(11, { value: upgradeCost });
+            
+            // Fast forward time significantly to exceed the cap
+            await ethers.provider.send("evm_increaseTime", [405 * 24 * 60 * 60]); // 405 days
+            await ethers.provider.send("evm_mine");
+            
+            // Calculate what rewards should be available
+            const pendingRewards = await nodeBooster.calculatePendingRewards(user1.address);
+            
+            // Claim rewards
+            await nodeBooster.connect(user1).claimRewards();
+            
+            // Check cap status after claiming
+            const [maxRewards, claimedRewards, remainingRewards, isCapReached] = 
+                await nodeBooster.getUserEngineCapStatus(user1.address, 11);
+            
+            // Should have reached or be very close to the 100% cap
+            const cumulativeCost = await nodeBooster.getCumulativeCost(11);
+            const expectedMaxRewards = cumulativeCost; // 100% of cumulative cost
+            
+            expect(maxRewards).to.equal(expectedMaxRewards);
+            expect(claimedRewards).to.be.lte(expectedMaxRewards);
+            
+            // Try to get more rewards - should be 0 or very small
+            await ethers.provider.send("evm_increaseTime", [24 * 60 * 60]); // 1 more day
+            await ethers.provider.send("evm_mine");
+            
+            const newPendingRewards = await nodeBooster.calculatePendingRewards(user1.address);
+            expect(newPendingRewards).to.be.lte(ethers.parseEther("0.001")); // Should be minimal or zero
+        });
+        
+        it("Should track rewards claimed per engine separately", async function () {
+            // Fast forward and claim rewards for engine 1
+            await ethers.provider.send("evm_increaseTime", [24 * 60 * 60]);
+            await ethers.provider.send("evm_mine");
+            
+            const engine1Rewards = await nodeBooster.calculatePendingRewards(user1.address);
+            await nodeBooster.connect(user1).claimRewards();
+            
+            // Check engine 1 claimed rewards
+            const engine1Claimed = await nodeBooster.getUserEngineRewardsClaimed(user1.address, 1);
+            expect(engine1Claimed).to.equal(engine1Rewards);
+            
+            // Upgrade to engine 2
+            const upgradeCost = await nodeBooster.calculateUpgradeCost(1, 2);
+            await nodeBooster.connect(user1).upgradeEngine(2, { value: upgradeCost });
+            
+            // Fast forward and claim rewards for engine 2
+            await ethers.provider.send("evm_increaseTime", [24 * 60 * 60]);
+            await ethers.provider.send("evm_mine");
+            
+            const engine2Rewards = await nodeBooster.calculatePendingRewards(user1.address);
+            await nodeBooster.connect(user1).claimRewards();
+            
+            // Check that rewards are tracked separately
+            const engine1ClaimedAfter = await nodeBooster.getUserEngineRewardsClaimed(user1.address, 1);
+            const engine2ClaimedAfter = await nodeBooster.getUserEngineRewardsClaimed(user1.address, 2);
+            
+            expect(engine1ClaimedAfter).to.equal(engine1Rewards); // Should remain the same
+            expect(engine2ClaimedAfter).to.be.gt(0); // Should have some rewards for engine 2
+            
+            // Total rewards claimed should be sum of both engines
+            const totalClaimed = engine1ClaimedAfter + engine2ClaimedAfter;
+            const [, , , , , , , userTotalRewardsClaimed] = await nodeBooster.getUserAccountInfo(user1.address);
+            expect(userTotalRewardsClaimed).to.equal(totalClaimed);
+        });
+        
+        it("Should return comprehensive reward status across all engines", async function () {
+            // Upgrade through several engines and claim rewards
+            let upgradeCost = await nodeBooster.calculateUpgradeCost(1, 2);
+            await nodeBooster.connect(user1).upgradeEngine(2, { value: upgradeCost });
+            
+            await ethers.provider.send("evm_increaseTime", [24 * 60 * 60]);
+            await ethers.provider.send("evm_mine");
+            await nodeBooster.connect(user1).claimRewards();
+            
+            upgradeCost = await nodeBooster.calculateUpgradeCost(2, 3);
+            await nodeBooster.connect(user1).upgradeEngine(3, { value: upgradeCost });
+            
+            // Get comprehensive status
+            const [engineIds, daysRewarded, maxDays, rewardsClaimed, maxRewardsAllowed, isTimeCapReached, isRewardCapReached] = 
+                await nodeBooster.getUserRewardStatus(user1.address);
+            
+            expect(engineIds.length).to.equal(10); // Engines 1-10
+            expect(engineIds[0]).to.equal(1);
+            expect(engineIds[9]).to.equal(10);
+            
+            // Check that engine 2 has some rewards claimed
+            expect(rewardsClaimed[1]).to.be.gt(0); // Engine 2 (index 1)
+            expect(maxRewardsAllowed[1]).to.be.gt(0); // Engine 2 max rewards
+            
+            // Check that higher engines have no rewards yet
+            expect(rewardsClaimed[9]).to.equal(0); // Engine 10 (index 9)
+        });
+        
+        it("Should handle different reward cap percentages per engine", async function () {
+            // Configure engines with different caps (use consecutive IDs)
+            await nodeBooster.configureEngine(11, "Low Cap Engine", ethers.parseEther("5"), 2, 405, 200, true); // 200%
+            await nodeBooster.configureEngine(12, "High Cap Engine", ethers.parseEther("5"), 2, 405, 800, true); // 800%
+            
+            // Check cap differences
+            const [maxRewards200] = await nodeBooster.getUserEngineCapStatus(user1.address, 11);
+            const [maxRewards800] = await nodeBooster.getUserEngineCapStatus(user1.address, 12);
+            
+            // Engines have same price but different cumulative costs due to position
+            const cumulativeCost11 = await nodeBooster.getCumulativeCost(11);
+            const cumulativeCost12 = await nodeBooster.getCumulativeCost(12);
+            
+            expect(maxRewards200).to.equal((cumulativeCost11 * 200n) / 100n);
+            expect(maxRewards800).to.equal((cumulativeCost12 * 800n) / 100n);
+            
+            // Verify the cap percentages are different
+            const [, , , , capPercentage11] = await nodeBooster.getUserEngineCapStatus(user1.address, 11);
+            const [, , , , capPercentage12] = await nodeBooster.getUserEngineCapStatus(user1.address, 12);
+            
+            expect(capPercentage11).to.equal(200);
+            expect(capPercentage12).to.equal(800);
+        });
+        
+        it("Should validate reward cap percentage in configureEngine", async function () {
+            await expect(nodeBooster.configureEngine(13, "Invalid Engine", ethers.parseEther("1"), 1, 405, 0, true))
+                .to.be.revertedWith("NodeBooster: Reward cap percentage must be greater than 0");
+        });
+        
+        it("Should include cap percentage in getUserEngineCapStatus", async function () {
+            const [, , , , capPercentage] = await nodeBooster.getUserEngineCapStatus(user1.address, 1);
+            expect(capPercentage).to.equal(450); // Default 450%
+            
+            // Configure custom engine and check its cap
+            await nodeBooster.configureEngine(11, "Custom Engine", ethers.parseEther("1"), 1, 405, 750, true);
+            const [, , , , customCapPercentage] = await nodeBooster.getUserEngineCapStatus(user1.address, 11);
+            expect(customCapPercentage).to.equal(750);
         });
     });
 });
