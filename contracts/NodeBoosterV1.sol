@@ -45,6 +45,9 @@ contract NodeBoosterV1 is
     /// @notice Maximum number of engines that can be configured
     uint256 public constant MAX_ENGINES = 50;
     
+    /// @notice Maximum referral levels for multi-level commissions
+    uint256 public constant MAX_REFERRAL_LEVELS = 10;
+    
     /// @notice USDC token contract
     IERC20 public usdcToken;
     
@@ -97,6 +100,7 @@ contract NodeBoosterV1 is
         uint256 hashPower; // Hash power units
         uint256 maxRewardCapDays; // Maximum reward period in days
         uint256 maxRewardCapPercentage; // Maximum reward cap as percentage (e.g., 450 = 450%)
+        uint256 maxReferralLevels; // Maximum referral levels this engine can earn from
         string name; // Engine name
     }
     
@@ -126,6 +130,13 @@ contract NodeBoosterV1 is
     
     /// @notice Total referral rewards paid
     uint256 public totalReferralRewards;
+    
+    /// @notice Total engine referral commissions paid
+    uint256 public totalEngineReferralCommissions;
+    
+    /// @notice Multi-level referral commission rates (in basis points)
+    /// Level 1: 800 (8%), Level 2: 400 (4%), etc.
+    uint256[MAX_REFERRAL_LEVELS] public referralCommissionRates;
     
     // Events
     event UserRegistered(
@@ -197,6 +208,19 @@ contract NodeBoosterV1 is
         address indexed wallet,
         uint256 amount
     );
+    
+    event EngineReferralCommissionPaid(
+        address indexed referrer,
+        address indexed buyer,
+        uint256 indexed level,
+        uint256 amount,
+        uint256 engineId
+    );
+    
+    event ReferralCommissionRatesUpdated(
+        uint256[MAX_REFERRAL_LEVELS] oldRates,
+        uint256[MAX_REFERRAL_LEVELS] newRates
+    );
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -255,6 +279,9 @@ contract NodeBoosterV1 is
         
         // Initialize with 10 default engines
         _initializeDefaultEngines();
+        
+        // Initialize multi-level referral commission rates
+        _initializeReferralCommissionRates();
     }
     
     /**
@@ -353,6 +380,7 @@ contract NodeBoosterV1 is
      * @param _hashPower Hash power units
      * @param _maxRewardCapDays Maximum reward period in days
      * @param _maxRewardCapPercentage Maximum reward cap as percentage (e.g., 450 = 450%)
+     * @param _maxReferralLevels Maximum referral levels this engine can earn from
      * @param _isActive Whether the engine is active
      */
     function configureEngine(
@@ -362,14 +390,16 @@ contract NodeBoosterV1 is
         uint256 _hashPower,
         uint256 _maxRewardCapDays,
         uint256 _maxRewardCapPercentage,
+        uint256 _maxReferralLevels,
         bool _isActive
     ) external onlyOwner {
-        require(_engineId >= 1 && _engineId < MAX_ENGINES, "NodeBooster: Invalid engine ID");
-        require(_priceInAvax > 0, "NodeBooster: Price must be greater than 0");
-        require(_hashPower > 0, "NodeBooster: Hash power must be greater than 0");
-        require(_maxRewardCapDays > 0, "NodeBooster: Reward cap days must be greater than 0");
-        require(_maxRewardCapPercentage > 0, "NodeBooster: Reward cap percentage must be greater than 0");
-        require(bytes(_name).length > 0, "NodeBooster: Engine name cannot be empty");
+        require(_engineId >= 1 && _engineId < MAX_ENGINES, "Invalid engine ID");
+        require(_priceInAvax > 0, "Price must be > 0");
+        require(_hashPower > 0, "Hash power must be > 0");
+        require(_maxRewardCapDays > 0, "Reward cap days must be > 0");
+        require(_maxRewardCapPercentage > 0, "Reward cap % must be > 0");
+        require(_maxReferralLevels <= MAX_REFERRAL_LEVELS, "Referral levels exceed max");
+        require(bytes(_name).length > 0, "Engine name cannot be empty");
         
         engines[_engineId] = Engine({
             isActive: _isActive,
@@ -377,6 +407,7 @@ contract NodeBoosterV1 is
             hashPower: _hashPower,
             maxRewardCapDays: _maxRewardCapDays,
             maxRewardCapPercentage: _maxRewardCapPercentage,
+            maxReferralLevels: _maxReferralLevels,
             name: _name
         });
         
@@ -394,8 +425,8 @@ contract NodeBoosterV1 is
      * @param _newWallet New wallet address
      */
     function updatePayoutWallet(uint256 _walletNumber, address _newWallet) external onlyOwner {
-        require(_newWallet != address(0), "NodeBooster: Invalid wallet address");
-        require(_walletNumber >= 1 && _walletNumber <= 3, "NodeBooster: Invalid wallet number");
+        require(_newWallet != address(0), "Invalid wallet address");
+        require(_walletNumber >= 1 && _walletNumber <= 3, "Invalid wallet number");
         
         address oldWallet;
         if (_walletNumber == 1) {
@@ -417,9 +448,9 @@ contract NodeBoosterV1 is
      * @param _newDefaultReferrer New default referrer address
      */
     function setDefaultReferrer(address _newDefaultReferrer) external onlyOwner {
-        require(_newDefaultReferrer != address(0), "NodeBooster: Invalid default referrer address");
-        require(userAccounts[_newDefaultReferrer].isRegistered, "NodeBooster: Default referrer must be registered");
-        require(!isBlacklisted[_newDefaultReferrer], "NodeBooster: Default referrer cannot be blacklisted");
+        require(_newDefaultReferrer != address(0), "Invalid default referrer");
+        require(userAccounts[_newDefaultReferrer].isRegistered, "Referrer must be registered");
+        require(!isBlacklisted[_newDefaultReferrer], "Referrer cannot be blacklisted");
         
         address oldReferrer = defaultReferrer;
         defaultReferrer = _newDefaultReferrer;
@@ -436,14 +467,40 @@ contract NodeBoosterV1 is
     }
     
     /**
+     * @dev Set multi-level referral commission rates
+     * @param _rates Array of commission rates in basis points for levels 1-10
+     */
+    function setReferralCommissionRates(uint256[MAX_REFERRAL_LEVELS] calldata _rates) external onlyOwner {
+        // Validate rates don't exceed 100% total
+        uint256 totalRate = 0;
+        for (uint256 i = 0; i < MAX_REFERRAL_LEVELS; i++) {
+            totalRate += _rates[i];
+        }
+        require(totalRate <= BASIS_POINTS, "Total commission rates exceed 100%");
+        
+        uint256[MAX_REFERRAL_LEVELS] memory oldRates = referralCommissionRates;
+        referralCommissionRates = _rates;
+        
+        emit ReferralCommissionRatesUpdated(oldRates, _rates);
+    }
+    
+    /**
+     * @dev Get referral commission rates
+     * @return Array of commission rates in basis points for levels 1-10
+     */
+    function getReferralCommissionRates() external view returns (uint256[MAX_REFERRAL_LEVELS] memory) {
+        return referralCommissionRates;
+    }
+    
+    /**
      * @dev Add or remove address from blacklist
      * @param _user User address to blacklist/unblacklist
      * @param _status True to blacklist, false to unblacklist
      */
     function setBlacklistStatus(address _user, bool _status) external onlyOwner {
-        require(_user != address(0), "NodeBooster: Invalid user address");
-        require(_user != owner(), "NodeBooster: Cannot blacklist owner");
-        require(isBlacklisted[_user] != _status, "NodeBooster: Status already set");
+        require(_user != address(0), "Invalid user address");
+        require(_user != owner(), "Cannot blacklist owner");
+        require(isBlacklisted[_user] != _status, "Status already set");
         
         isBlacklisted[_user] = _status;
         emit UserBlacklisted(_user, _status, msg.sender);
@@ -455,13 +512,13 @@ contract NodeBoosterV1 is
      * @param _status True to blacklist, false to unblacklist
      */
     function batchSetBlacklistStatus(address[] calldata _users, bool _status) external onlyOwner {
-        require(_users.length > 0, "NodeBooster: Empty users array");
-        require(_users.length <= 100, "NodeBooster: Too many users (max 100)");
+        require(_users.length > 0, "Empty users array");
+        require(_users.length <= 100, "Too many users (max 100)");
         
         for (uint256 i = 0; i < _users.length; i++) {
             address user = _users[i];
-            require(user != address(0), "NodeBooster: Invalid user address");
-            require(user != owner(), "NodeBooster: Cannot blacklist owner");
+            require(user != address(0), "Invalid user address");
+            require(user != owner(), "Cannot blacklist owner");
             
             if (isBlacklisted[user] != _status) {
                 isBlacklisted[user] = _status;
@@ -550,8 +607,12 @@ contract NodeBoosterV1 is
         account.engineStartTime = block.timestamp;
         account.lastClaimTime = 0; // Reset claim time for new engine
         
-        // Distribute AVAX to payout wallets
-        _distributeAvaxToPayouts(upgradeCost);
+        // Process multi-level referral commissions
+        uint256 totalCommissions = _processEngineReferralCommissions(msg.sender, upgradeCost);
+        
+        // Distribute remaining AVAX to payout wallets
+        uint256 remainingAmount = upgradeCost - totalCommissions;
+        // TODO decide what to do with remaining amount. Currently, it stays in the contract.
         
         emit EngineUpgraded(msg.sender, oldEngine, targetEngine, pendingRewards);
     }
@@ -633,32 +694,7 @@ contract NodeBoosterV1 is
         
         emit RewardsClaimed(msg.sender, totalRewards);
     }
-    
-    /**
-     * @dev Distribute AVAX to payout wallets
-     * @param amount Total amount to distribute
-     */
-    function _distributeAvaxToPayouts(uint256 amount) private {
-        address[] memory wallets = new address[](3);
-        wallets[0] = payoutWallet1;
-        wallets[1] = payoutWallet2;
-        wallets[2] = payoutWallet3;
         
-        uint256 amountPerWallet = amount / wallets.length;
-        uint256 remainder = amount % wallets.length;
-        
-        for (uint256 i = 0; i < wallets.length; i++) {
-            uint256 walletAmount = amountPerWallet;
-            
-            // Add remainder to last wallet
-            if (i == wallets.length - 1) {
-                walletAmount += remainder;
-            }
-            
-            payable(wallets[i]).transfer(walletAmount);
-            emit PayoutDistributed(wallets[i], walletAmount);
-        }
-    }
     
     /**
      * @dev Get total number of registered users
@@ -1182,14 +1218,127 @@ contract NodeBoosterV1 is
      * @return totalUsdcCollected Total USDC collected
      * @return totalAvax0Distributed Total AVAX0 distributed
      * @return totalReferralRewards Total referral rewards paid
+     * @return totalEngineReferralCommissions Total engine referral commissions paid
      */
     function getStats() external view returns (
         uint256,
         uint256,
         uint256,
+        uint256,
         uint256
     ) {
-        return (totalUsers, totalUsdcCollected, totalAvax0Distributed, totalReferralRewards);
+        return (totalUsers, totalUsdcCollected, totalAvax0Distributed, totalReferralRewards, totalEngineReferralCommissions);
+    }
+    
+    /**
+     * @dev Get referral chain for a user up to MAX_REFERRAL_LEVELS
+     * @param user Starting user address
+     * @return referrers Array of referrer addresses in the chain
+     * @return referrerEngines Array of engine IDs for each referrer
+     * @return maxLevels Array of max referral levels each referrer can earn from
+     */
+    function getReferralChain(address user) external view returns (
+        address[] memory referrers,
+        uint256[] memory referrerEngines,
+        uint256[] memory maxLevels
+    ) {
+        referrers = new address[](MAX_REFERRAL_LEVELS);
+        referrerEngines = new uint256[](MAX_REFERRAL_LEVELS);
+        maxLevels = new uint256[](MAX_REFERRAL_LEVELS);
+        
+        address currentReferrer = userAccounts[user].referrer;
+        uint256 count = 0;
+        
+        for (uint256 i = 0; i < MAX_REFERRAL_LEVELS && currentReferrer != address(0); i++) {
+            referrers[i] = currentReferrer;
+            referrerEngines[i] = userAccounts[currentReferrer].currentEngine;
+            
+            if (referrerEngines[i] > 0) {
+                maxLevels[i] = this.getEngine(referrerEngines[i]).maxReferralLevels;
+            } else {
+                maxLevels[i] = 0;
+            }
+            
+            currentReferrer = userAccounts[currentReferrer].referrer;
+            count++;
+        }
+        
+        // Resize arrays to actual count
+        assembly {
+            mstore(referrers, count)
+            mstore(referrerEngines, count)
+            mstore(maxLevels, count)
+        }
+    }
+    
+    /**
+     * @dev Calculate potential commissions for engine purchase
+     * @param buyer Address of potential buyer
+     * @param amount Amount of engine purchase
+     * @return referrers Array of referrer addresses that would receive commissions
+     * @return levels Array of commission levels (1-10)
+     * @return commissions Array of commission amounts
+     * @return totalCommission Total commission amount
+     */
+    function calculateEngineCommissions(address buyer, uint256 amount) external view returns (
+        address[] memory referrers,
+        uint256[] memory levels,
+        uint256[] memory commissions,
+        uint256 totalCommission
+    ) {
+        address[] memory tempReferrers = new address[](MAX_REFERRAL_LEVELS);
+        uint256[] memory tempLevels = new uint256[](MAX_REFERRAL_LEVELS);
+        uint256[] memory tempCommissions = new uint256[](MAX_REFERRAL_LEVELS);
+        
+        address currentReferrer = userAccounts[buyer].referrer;
+        uint256 count = 0;
+        uint256 total = 0;
+        
+        for (uint256 level = 1; level <= MAX_REFERRAL_LEVELS; level++) {
+            if (currentReferrer == address(0) || 
+                !userAccounts[currentReferrer].isRegistered || 
+                isBlacklisted[currentReferrer]) {
+                break;
+            }
+            
+            uint256 referrerEngine = userAccounts[currentReferrer].currentEngine;
+            if (referrerEngine == 0) {
+                currentReferrer = userAccounts[currentReferrer].referrer;
+                continue;
+            }
+            
+            uint256 maxLevelsForEngine = engines[referrerEngine].maxReferralLevels;
+            if (level > maxLevelsForEngine) {
+                currentReferrer = userAccounts[currentReferrer].referrer;
+                continue;
+            }
+            
+            uint256 commissionRate = referralCommissionRates[level - 1];
+            if (commissionRate > 0) {
+                uint256 commission = (amount * commissionRate) / BASIS_POINTS;
+                
+                tempReferrers[count] = currentReferrer;
+                tempLevels[count] = level;
+                tempCommissions[count] = commission;
+                total += commission;
+                count++;
+            }
+            
+            currentReferrer = userAccounts[currentReferrer].referrer;
+        }
+        
+        // Create properly sized return arrays
+        referrers = new address[](count);
+        levels = new uint256[](count);
+        commissions = new uint256[](count);
+        
+        for (uint256 i = 0; i < count; i++) {
+            referrers[i] = tempReferrers[i];
+            levels[i] = tempLevels[i];
+            commissions[i] = tempCommissions[i];
+        }
+        
+        totalCommission = total;
     }
     
     /**
@@ -1258,9 +1407,9 @@ contract NodeBoosterV1 is
      * @param newOwner Address of the new owner
      */
     function transferOwnership(address newOwner) public override onlyOwner {
-        require(newOwner != address(0), "NodeBooster: New owner cannot be zero address");
-        require(newOwner != owner(), "NodeBooster: New owner cannot be current owner");
-        require(!isBlacklisted[newOwner], "NodeBooster: New owner cannot be blacklisted");
+        require(newOwner != address(0), "New owner cannot be zero");
+        require(newOwner != owner(), "New owner cannot be current");
+        require(!isBlacklisted[newOwner], "New owner cannot be blacklisted");
         
         address oldOwner = owner();
         emit OwnershipTransferInitiated(oldOwner, newOwner);
@@ -1295,9 +1444,9 @@ contract NodeBoosterV1 is
      * @param amount Amount to recover
      */
     function recoverToken(address token, address to, uint256 amount) external onlyOwner {
-        require(token != address(this), "NodeBooster: cannot recover own tokens");
-        require(to != address(0), "NodeBooster: invalid recipient");
-        require(amount > 0, "NodeBooster: invalid amount");
+        require(token != address(this), "Cannot recover own tokens");
+        require(to != address(0), "Invalid recipient");
+        require(amount > 0, "Invalid amount");
         IERC20(token).safeTransfer(to, amount);
         emit TokensWithdrawn(token, to, amount);        
     }
@@ -1307,8 +1456,8 @@ contract NodeBoosterV1 is
      * @param amount Amount of tokens to recover
      */
     function recoverFunds(uint256 amount) external onlyOwner {
-        require(amount > 0, "NodeBooster: invalid amount");
-        require(amount <= address(this).balance, "NodeBooster: insufficient funds");        
+        require(amount > 0, "Invalid amount");
+        require(amount <= address(this).balance, "Insufficient funds");        
         payable(owner()).transfer(amount);        
     }
     
@@ -1327,6 +1476,89 @@ contract NodeBoosterV1 is
     }
     
     /**
+     * @dev Process multi-level referral commissions for engine purchases
+     * @param buyer Address of the engine buyer
+     * @param amount Total amount paid for engine upgrade
+     * @return totalCommissionsPaid Total amount paid in commissions
+     */
+    function _processEngineReferralCommissions(address buyer, uint256 amount) internal returns (uint256) {
+        address currentReferrer = userAccounts[buyer].referrer;
+        uint256 totalCommissionsPaid = 0;
+        
+        // Process up to MAX_REFERRAL_LEVELS
+        for (uint256 level = 1; level <= MAX_REFERRAL_LEVELS; level++) {
+            if (currentReferrer == address(0) || 
+                !userAccounts[currentReferrer].isRegistered || 
+                isBlacklisted[currentReferrer]) {
+                break; // Stop if referrer is invalid
+            }
+            
+            // Check if referrer has an engine and if engine supports this level
+            uint256 referrerEngine = userAccounts[currentReferrer].currentEngine;
+            if (referrerEngine == 0) {
+                // Move to next referrer without paying commission
+                currentReferrer = userAccounts[currentReferrer].referrer;
+                continue;
+            }
+            
+            // Check if referrer's engine supports this commission level
+            uint256 maxLevelsForEngine = engines[referrerEngine].maxReferralLevels;
+            if (level > maxLevelsForEngine) {
+                // This referrer's engine doesn't support this level, move to next
+                currentReferrer = userAccounts[currentReferrer].referrer;
+                continue;
+            }
+            
+            // Calculate commission for this level
+            uint256 commissionRate = referralCommissionRates[level - 1]; // Array is 0-indexed
+            if (commissionRate == 0) {
+                // No commission for this level, move to next referrer
+                currentReferrer = userAccounts[currentReferrer].referrer;
+                continue;
+            }
+            
+            uint256 commission = (amount * commissionRate) / BASIS_POINTS;
+            if (commission > 0) {
+                // Transfer commission to referrer
+                payable(currentReferrer).transfer(commission);
+                
+                // Update referrer's stats
+                userAccounts[currentReferrer].totalReferralRewards += commission;
+                
+                // Update global stats
+                totalEngineReferralCommissions += commission;
+                totalCommissionsPaid += commission;
+                
+                // Emit commission event
+                emit EngineReferralCommissionPaid(currentReferrer, buyer, level, commission, userAccounts[buyer].currentEngine);
+            }
+            
+            // Move to next level referrer
+            currentReferrer = userAccounts[currentReferrer].referrer;
+        }
+        
+        return totalCommissionsPaid;
+    }
+    
+    /**
+     * @dev Initialize referral commission rates (called during contract initialization)
+     */
+    function _initializeReferralCommissionRates() internal {
+        // Set default commission rates
+        // Level 1: 8.0%
+        // Level 2: 4.0%
+        // Level 3: 3.0%
+        // Level 4: 2.5%
+        // Level 5: 2.5%
+        // Level 6: 1.5%
+        // Level 7: 1.0%
+        // Level 8: 1.0%
+        // Level 9: 1.0%
+        // Level 10: 1.0%
+        referralCommissionRates = [800, 400, 300, 250, 250, 150, 100, 100, 100, 100];                
+    }
+    
+    /**
      * @dev Initialize default engines (called during contract initialization)
      */
     function _initializeDefaultEngines() internal {
@@ -1337,6 +1569,7 @@ contract NodeBoosterV1 is
             hashPower: 1,
             maxRewardCapDays: 405,
             maxRewardCapPercentage: 450, // 450%
+            maxReferralLevels: 1,
             name: "Starter Engine"
         });
         
@@ -1347,6 +1580,7 @@ contract NodeBoosterV1 is
             hashPower: 2,
             maxRewardCapDays: 405,
             maxRewardCapPercentage: 450, // 450%
+            maxReferralLevels: 2,
             name: "Basic Engine"
         });
         
@@ -1357,6 +1591,7 @@ contract NodeBoosterV1 is
             hashPower: 4,
             maxRewardCapDays: 405,
             maxRewardCapPercentage: 450, // 450%
+            maxReferralLevels: 3,
             name: "Standard Engine"
         });
         
@@ -1367,6 +1602,7 @@ contract NodeBoosterV1 is
             hashPower: 6,
             maxRewardCapDays: 405,
             maxRewardCapPercentage: 450, // 450%
+            maxReferralLevels: 4,
             name: "Advanced Engine"
         });
         
@@ -1377,6 +1613,7 @@ contract NodeBoosterV1 is
             hashPower: 8,
             maxRewardCapDays: 405,
             maxRewardCapPercentage: 450, // 450%
+            maxReferralLevels: 5,
             name: "Professional Engine"
         });
         
@@ -1387,6 +1624,7 @@ contract NodeBoosterV1 is
             hashPower: 10,
             maxRewardCapDays: 405,
             maxRewardCapPercentage: 450, // 450%
+            maxReferralLevels: 6,
             name: "Expert Engine"
         });
         
@@ -1397,6 +1635,7 @@ contract NodeBoosterV1 is
             hashPower: 12,
             maxRewardCapDays: 405,
             maxRewardCapPercentage: 450, // 450%
+            maxReferralLevels: 10,
             name: "Master Engine"
         });
         
@@ -1407,6 +1646,7 @@ contract NodeBoosterV1 is
             hashPower: 14,
             maxRewardCapDays: 405,
             maxRewardCapPercentage: 450, // 450%
+            maxReferralLevels: 10,
             name: "Elite Engine"
         });
         
@@ -1417,6 +1657,7 @@ contract NodeBoosterV1 is
             hashPower: 16,
             maxRewardCapDays: 405,
             maxRewardCapPercentage: 450, // 450%
+            maxReferralLevels: 10,
             name: "Supreme Engine"
         });
         
@@ -1427,6 +1668,7 @@ contract NodeBoosterV1 is
             hashPower: 18,
             maxRewardCapDays: 405,
             maxRewardCapPercentage: 450, // 450%
+            maxReferralLevels: 10,
             name: "Ultimate Engine"
         });
         

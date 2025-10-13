@@ -220,7 +220,7 @@ describe("NodeBooster V1", function () {
             const maxRewardCapPercentage = 600; // 600%
             const isActive = true;
             
-            await expect(nodeBooster.configureEngine(engineId, name, priceInAvax, hashPower, maxRewardCapDays, maxRewardCapPercentage, isActive))
+            await expect(nodeBooster.configureEngine(engineId, name, priceInAvax, hashPower, maxRewardCapDays, maxRewardCapPercentage, 10, isActive))
                 .to.emit(nodeBooster, "EngineConfigured")
                 .withArgs(engineId, name, priceInAvax, hashPower, maxRewardCapDays, maxRewardCapPercentage, isActive);
             
@@ -236,28 +236,28 @@ describe("NodeBooster V1", function () {
         });
         
         it("Should not allow non-owner to configure engine", async function () {
-            await expect(nodeBooster.connect(user1).configureEngine(11, "Test", ethers.parseEther("1"), 100, 30, 450, true))
+            await expect(nodeBooster.connect(user1).configureEngine(11, "Test", ethers.parseEther("1"), 100, 30, 450, 5, true))
                 .to.be.revertedWithCustomError(nodeBooster, "OwnableUnauthorizedAccount");
         });
         
         it("Should validate engine parameters", async function () {
-            await expect(nodeBooster.configureEngine(11, "", ethers.parseEther("1"), 100, 30, 450, true))
-                .to.be.revertedWith("NodeBooster: Engine name cannot be empty");
+            await expect(nodeBooster.configureEngine(11, "", ethers.parseEther("1"), 100, 30, 450, 5, true))
+                .to.be.revertedWith("Engine name cannot be empty");
             
-            await expect(nodeBooster.configureEngine(11, "Test", 0, 100, 30, 450, true))
-                .to.be.revertedWith("NodeBooster: Price must be greater than 0");
+            await expect(nodeBooster.configureEngine(11, "Test", 0, 100, 30, 450, 5, true))
+                .to.be.revertedWith("Price must be > 0");
             
-            await expect(nodeBooster.configureEngine(11, "Test", ethers.parseEther("1"), 0, 30, 450, true))
-                .to.be.revertedWith("NodeBooster: Hash power must be greater than 0");
+            await expect(nodeBooster.configureEngine(11, "Test", ethers.parseEther("1"), 0, 30, 450, 5, true))
+                .to.be.revertedWith("Hash power must be > 0");
             
-            await expect(nodeBooster.configureEngine(11, "Test", ethers.parseEther("1"), 100, 0, 450, true))
-                .to.be.revertedWith("NodeBooster: Reward cap days must be greater than 0");
+            await expect(nodeBooster.configureEngine(11, "Test", ethers.parseEther("1"), 100, 0, 450, 5, true))
+                .to.be.revertedWith("Reward cap days must be > 0");
             
-            await expect(nodeBooster.configureEngine(11, "Test", ethers.parseEther("1"), 100, 30, 0, true))
-                .to.be.revertedWith("NodeBooster: Reward cap percentage must be greater than 0");
+            await expect(nodeBooster.configureEngine(11, "Test", ethers.parseEther("1"), 100, 30, 0, 5, true))
+                .to.be.revertedWith("Reward cap % must be > 0");
             
-            await expect(nodeBooster.configureEngine(50, "Test", ethers.parseEther("1"), 100, 30, 450, true))
-                .to.be.revertedWith("NodeBooster: Invalid engine ID");
+            await expect(nodeBooster.configureEngine(50, "Test", ethers.parseEther("1"), 100, 30, 450, 5, true))
+                .to.be.revertedWith("Invalid engine ID");
         });
     });
     
@@ -281,8 +281,8 @@ describe("NodeBooster V1", function () {
         });
         
         it("Should not allow setting unregistered user as default referrer", async function () {
-            await expect(nodeBooster.setDefaultReferrer(user1.address))
-                .to.be.revertedWith("NodeBooster: Default referrer must be registered");
+            await expect(nodeBooster.setDefaultReferrer(user3.address))
+                .to.be.revertedWith("Referrer must be registered");
         });
         
         it("Should not allow setting blacklisted user as default referrer", async function () {
@@ -292,7 +292,7 @@ describe("NodeBooster V1", function () {
             await nodeBooster.setBlacklistStatus(user1.address, true);
             
             await expect(nodeBooster.setDefaultReferrer(user1.address))
-                .to.be.revertedWith("NodeBooster: Default referrer cannot be blacklisted");
+                .to.be.revertedWith("Referrer cannot be blacklisted");
         });
         
         it("Should use default referrer when no referrer is specified", async function () {
@@ -375,7 +375,7 @@ describe("NodeBooster V1", function () {
         
         it("Should not allow blacklisting owner", async function () {
             await expect(nodeBooster.setBlacklistStatus(owner.address, true))
-                .to.be.revertedWith("NodeBooster: Cannot blacklist owner");
+                .to.be.revertedWith("Cannot blacklist owner");
         });
         
         it("Should not allow non-owner to blacklist", async function () {
@@ -385,12 +385,12 @@ describe("NodeBooster V1", function () {
         
         it("Should validate batch blacklist parameters", async function () {
             await expect(nodeBooster.batchSetBlacklistStatus([], true))
-                .to.be.revertedWith("NodeBooster: Empty users array");
+                .to.be.revertedWith("Empty users array");
             
             // Create array with too many users
             const tooManyUsers = new Array(101).fill(user2.address);
             await expect(nodeBooster.batchSetBlacklistStatus(tooManyUsers, true))
-                .to.be.revertedWith("NodeBooster: Too many users (max 100)");
+                .to.be.revertedWith("Too many users (max 100)");
         });
     });
     
@@ -466,7 +466,7 @@ describe("NodeBooster V1", function () {
             await nodeBooster.setBlacklistStatus(user1.address, true);
             
             await expect(nodeBooster.transferOwnership(user1.address))
-                .to.be.revertedWith("NodeBooster: New owner cannot be blacklisted");
+                .to.be.revertedWith("New owner cannot be blacklisted");
         });
         
         it("Should allow emergency ownership transfer to blacklisted address", async function () {
@@ -711,7 +711,7 @@ describe("NodeBooster V1", function () {
         
         it("Should use engine's maxRewardCapPercentage in reward calculations", async function () {
             // Configure a custom engine with different reward cap
-            await nodeBooster.configureEngine(11, "Custom Engine", ethers.parseEther("10"), 5, 405, 300, true); // 300% cap
+            await nodeBooster.configureEngine(11, "Custom Engine", ethers.parseEther("10"), 5, 405, 300, 10, true); // 300% cap
             
             const engine11 = await nodeBooster.getEngine(11);
             expect(engine11.maxRewardCapPercentage).to.equal(300);
@@ -753,7 +753,7 @@ describe("NodeBooster V1", function () {
         
         it("Should stop rewarding when cap is reached", async function () {
             // Configure a small engine with low cap for testing (use engine 11 since 1-10 are taken)
-            await nodeBooster.configureEngine(11, "Test Engine", ethers.parseEther("1"), 1, 405, 100, true); // 100% cap only
+            await nodeBooster.configureEngine(11, "Test Engine", ethers.parseEther("1"), 1, 405, 100, 5, true); // 100% cap only
             
             // Upgrade to test engine
             const upgradeCost = await nodeBooster.calculateUpgradeCost(1, 11);
@@ -854,8 +854,8 @@ describe("NodeBooster V1", function () {
         
         it("Should handle different reward cap percentages per engine", async function () {
             // Configure engines with different caps (use consecutive IDs)
-            await nodeBooster.configureEngine(11, "Low Cap Engine", ethers.parseEther("5"), 2, 405, 200, true); // 200%
-            await nodeBooster.configureEngine(12, "High Cap Engine", ethers.parseEther("5"), 2, 405, 800, true); // 800%
+            await nodeBooster.configureEngine(11, "Low Cap Engine", ethers.parseEther("5"), 2, 405, 200, 5, true); // 200%
+            await nodeBooster.configureEngine(12, "High Cap Engine", ethers.parseEther("5"), 2, 405, 800, 5, true); // 800%
             
             // Check cap differences
             const [maxRewards200] = await nodeBooster.getUserEngineCapStatus(user1.address, 11);
@@ -877,8 +877,8 @@ describe("NodeBooster V1", function () {
         });
         
         it("Should validate reward cap percentage in configureEngine", async function () {
-            await expect(nodeBooster.configureEngine(13, "Invalid Engine", ethers.parseEther("1"), 1, 405, 0, true))
-                .to.be.revertedWith("NodeBooster: Reward cap percentage must be greater than 0");
+            await expect(nodeBooster.configureEngine(13, "Invalid Engine", ethers.parseEther("1"), 1, 405, 0, 5, true))
+                .to.be.revertedWith("Reward cap % must be > 0");
         });
         
         it("Should include cap percentage in getUserEngineCapStatus", async function () {
@@ -886,9 +886,227 @@ describe("NodeBooster V1", function () {
             expect(capPercentage).to.equal(450); // Default 450%
             
             // Configure custom engine and check its cap
-            await nodeBooster.configureEngine(11, "Custom Engine", ethers.parseEther("1"), 1, 405, 750, true);
+            await nodeBooster.configureEngine(11, "Custom Engine", ethers.parseEther("1"), 1, 405, 750, 5, true);
             const [, , , , customCapPercentage] = await nodeBooster.getUserEngineCapStatus(user1.address, 11);
             expect(customCapPercentage).to.equal(750);
+        });
+    });
+
+    describe("Multi-Level Engine Purchase Commission System", function () {
+        beforeEach(async function () {
+            // Register referral chain: user1 -> user2 -> user3
+            await usdcToken.connect(user2).approve(await nodeBooster.getAddress(), REGISTRATION_FEE);
+            await usdcToken.mint(user2.address, REGISTRATION_FEE);
+            await nodeBooster.connect(user2).register(owner.address); // user2 refers to owner
+            
+            await usdcToken.connect(user3).approve(await nodeBooster.getAddress(), REGISTRATION_FEE);
+            await usdcToken.mint(user3.address, REGISTRATION_FEE);
+            await nodeBooster.connect(user3).register(user2.address); // user3 refers to user2
+            
+            await usdcToken.connect(user1).approve(await nodeBooster.getAddress(), REGISTRATION_FEE);
+            await usdcToken.mint(user1.address, REGISTRATION_FEE);
+            await nodeBooster.connect(user1).register(user3.address); // user1 refers to user3
+        });
+
+        it("Should have correct default referral commission rates", async function () {
+            const rates = await nodeBooster.getReferralCommissionRates();
+            
+            expect(rates[0]).to.equal(800);  // Level 1: 8%
+            expect(rates[1]).to.equal(400);  // Level 2: 4%
+            expect(rates[2]).to.equal(300);  // Level 3: 3%
+            expect(rates[3]).to.equal(250);  // Level 4: 2.5%
+            expect(rates[4]).to.equal(250);  // Level 5: 2.5%
+            expect(rates[5]).to.equal(150);  // Level 6: 1.5%
+            expect(rates[6]).to.equal(100);  // Level 7: 1%
+            expect(rates[7]).to.equal(100);  // Level 8: 1%
+            expect(rates[8]).to.equal(100);  // Level 9: 1%
+            expect(rates[9]).to.equal(100);  // Level 10: 1%
+        });
+
+        it("Should allow owner to update referral commission rates", async function () {
+            const newRates = [1000, 500, 300, 200, 200, 100, 50, 50, 50, 50]; // New rates
+            
+            await expect(nodeBooster.setReferralCommissionRates(newRates))
+                .to.emit(nodeBooster, "ReferralCommissionRatesUpdated");
+            
+            const updatedRates = await nodeBooster.getReferralCommissionRates();
+            for (let i = 0; i < 10; i++) {
+                expect(updatedRates[i]).to.equal(newRates[i]);
+            }
+        });
+
+        it("Should reject commission rates exceeding 100%", async function () {
+            const invalidRates = [5000, 5000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000]; // Total > 100%
+            
+            await expect(nodeBooster.setReferralCommissionRates(invalidRates))
+                .to.be.revertedWith("Total commission rates exceed 100%");
+        });
+
+        it("Should have engines with correct maxReferralLevels", async function () {
+            for (let i = 1; i <= 6; i++) {
+                const engine = await nodeBooster.getEngine(i);
+                expect(engine.maxReferralLevels).to.equal(i);
+            }
+            
+            // Engines 7-10 should have 10 levels
+            for (let i = 7; i <= 10; i++) {
+                const engine = await nodeBooster.getEngine(i);
+                expect(engine.maxReferralLevels).to.equal(10);
+            }
+        });
+
+        it("Should return correct referral chain", async function () {
+            const [referrers, referrerEngines, maxLevels] = await nodeBooster.getReferralChain(user1.address);
+            
+            expect(referrers[0]).to.equal(user3.address);
+            expect(referrers[1]).to.equal(user2.address);
+            expect(referrers[2]).to.equal(owner.address);
+            
+            // Initially no engines
+            expect(referrerEngines[0]).to.equal(0);
+            expect(referrerEngines[1]).to.equal(0);
+            expect(referrerEngines[2]).to.equal(0);
+        });
+
+        it("Should calculate potential commissions correctly", async function () {
+            // Give user3 engine 3 (max 3 levels)
+            await nodeBooster.connect(user3).upgradeEngine(3, { value: ethers.parseEther("14") });
+            
+            const purchaseAmount = ethers.parseEther("10");
+            const [referrers, levels, commissions, totalCommission] = 
+                await nodeBooster.calculateEngineCommissions(user1.address, purchaseAmount);
+            
+            // Should only have user3 as referrer (has engine 3, max 3 levels, level 1 commission)
+            expect(referrers.length).to.equal(1);
+            expect(referrers[0]).to.equal(user3.address);
+            expect(levels[0]).to.equal(1);
+            
+            // 8% of 10 ETH = 0.8 ETH
+            const expectedCommission = (purchaseAmount * 800n) / 10000n;
+            expect(commissions[0]).to.equal(expectedCommission);
+            expect(totalCommission).to.equal(expectedCommission);
+        });
+
+        it("Should pay multi-level commissions on engine upgrade", async function () {
+            // Setup engines for referrers
+            await nodeBooster.connect(user3).upgradeEngine(2, { value: ethers.parseEther("6") });   // Max 2 levels
+            await nodeBooster.connect(user2).upgradeEngine(5, { value: ethers.parseEther("46") });  // Max 5 levels
+            await nodeBooster.connect(owner).upgradeEngine(7, { value: ethers.parseEther("272") }); // Max 10 levels
+            
+            const upgradeAmount = ethers.parseEther("2"); // Engine 1 cost
+            
+            // user1 buys engine 1
+            const tx = await nodeBooster.connect(user1).upgradeEngine(1, { value: upgradeAmount });
+            
+            // Level 1: user3 gets 8% of 2 ETH = 0.16 ETH
+            const level1Commission = (upgradeAmount * 800n) / 10000n;
+            // Level 2: user2 gets 4% of 2 ETH = 0.08 ETH
+            const level2Commission = (upgradeAmount * 400n) / 10000n;
+            
+            // Check events were emitted
+            await expect(tx)
+                .to.emit(nodeBooster, "EngineReferralCommissionPaid")
+                .withArgs(user3.address, user1.address, 1, level1Commission, 1);
+                
+            await expect(tx)
+                .to.emit(nodeBooster, "EngineReferralCommissionPaid")
+                .withArgs(user2.address, user1.address, 2, level2Commission, 1);
+                
+            // Check referral rewards were updated (should be greater than or equal to expected commission)
+            const user3Account = await nodeBooster.getUserAccountInfo(user3.address);
+            const user2Account = await nodeBooster.getUserAccountInfo(user2.address);
+            
+            expect(user3Account[3]).to.be.gte(level1Commission); // totalReferralRewards
+            expect(user2Account[3]).to.be.gte(level2Commission);
+        });        it("Should respect engine level limits for commissions", async function () {
+            // user3 has engine 1 (max 1 level), user2 has no engine  
+            await nodeBooster.connect(user3).upgradeEngine(1, { value: ethers.parseEther("2") });
+            // user2 has no engine, so they can't earn commissions
+            
+            // user1 first buys engine 1, then upgrades to engine 2
+            await nodeBooster.connect(user1).upgradeEngine(1, { value: ethers.parseEther("2") });
+            const upgradeAmount = ethers.parseEther("4"); // Engine 2 price when upgrading from 1
+            
+            const tx = await nodeBooster.connect(user1).upgradeEngine(2, { value: upgradeAmount });
+            
+            // user3 should get level 1 commission (8%)
+            const level1Commission = (upgradeAmount * 800n) / 10000n;
+            
+            // Check only user3 got commission (user2 has no engine so no commission)
+            await expect(tx)
+                .to.emit(nodeBooster, "EngineReferralCommissionPaid")
+                .withArgs(user3.address, user1.address, 1, level1Commission, 2);
+                
+            // Only one commission event should be emitted
+            const receipt = await tx.wait();
+            const commissionEvents = receipt.logs.filter(log => 
+                log.fragment && log.fragment.name === "EngineReferralCommissionPaid"
+            );
+            expect(commissionEvents.length).to.equal(1); // Only one commission event
+        });
+
+        it("Should skip referrers without engines", async function () {
+            // Don't give any referrers engines - user3 and user2 have no engines, owner doesn't either in this test
+            const upgradeAmount = ethers.parseEther("2");
+            const tx = await nodeBooster.connect(user1).upgradeEngine(1, { value: upgradeAmount });
+            
+            // No commissions should be paid since user3 and user2 don't have engines
+            // Check no commission events were emitted
+            const receipt = await tx.wait();
+            const commissionEvents = receipt.logs.filter(log => 
+                log.fragment && log.fragment.name === "EngineReferralCommissionPaid"
+            );
+            expect(commissionEvents.length).to.equal(0); // No commission events
+        });
+
+        it("Should update total engine referral commissions stat", async function () {
+            await nodeBooster.connect(user3).upgradeEngine(5, { value: ethers.parseEther("46") });
+            
+            const initialStats = await nodeBooster.getStats();
+            const initialCommissions = initialStats[4]; // totalEngineReferralCommissions
+            
+            const upgradeAmount = ethers.parseEther("2");
+            await nodeBooster.connect(user1).upgradeEngine(1, { value: upgradeAmount });
+            
+            const finalStats = await nodeBooster.getStats();
+            const finalCommissions = finalStats[4];
+            
+            const expectedCommission = (upgradeAmount * 800n) / 10000n; // 8% level 1 commission
+            expect(finalCommissions - initialCommissions).to.equal(expectedCommission);
+        });
+
+        it("Should handle blacklisted referrers in chain", async function () {
+            // Blacklist user3
+            await nodeBooster.setBlacklistStatus(user3.address, true);
+            
+            // Give user2 an engine
+            await nodeBooster.connect(user2).upgradeEngine(3, { value: ethers.parseEther("14") });
+            
+            const initialUser2Balance = await ethers.provider.getBalance(user2.address);
+            
+            await nodeBooster.connect(user1).upgradeEngine(1, { value: ethers.parseEther("2") });
+            
+            // user3 is blacklisted so commission chain should stop
+            const finalUser2Balance = await ethers.provider.getBalance(user2.address);
+            expect(finalUser2Balance).to.equal(initialUser2Balance); // No commission
+        });
+
+        it("Should distribute remaining avax funds after commissions", async function () {
+            await nodeBooster.connect(user3).upgradeEngine(3, { value: ethers.parseEther("14") });
+            
+            const initialWallet1Balance = await ethers.provider.getBalance(payoutWallet1.address);
+            const upgradeAmount = ethers.parseEther("2");
+            
+            await nodeBooster.connect(user1).upgradeEngine(1, { value: upgradeAmount });
+            
+            const finalWallet1Balance = await ethers.provider.getBalance(payoutWallet1.address);
+            
+            // Commission: 8% of 2 ETH = 0.16 ETH
+            const commission = (upgradeAmount * 800n) / 10000n;
+            const remainingAmount = upgradeAmount - commission;
+            const expectedWalletShare = remainingAmount / 3n;
+            
+            expect(finalWallet1Balance - initialWallet1Balance).to.equal(expectedWalletShare);
         });
     });
 });
