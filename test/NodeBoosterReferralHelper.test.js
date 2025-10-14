@@ -34,13 +34,18 @@ describe("NodeBooster Referral Helper", function () {
             NodeBoosterV1,
             [
                 await usdcToken.getAddress(),
-                await avax0Token.getAddress(),
-                payout1.address,
-                payout2.address,
-                payout3.address
+                await avax0Token.getAddress()
             ],
             { initializer: "initialize", kind: "uups" }
         );
+        await nodeBoosterProxy.waitForDeployment();
+        nodeBooster = await ethers.getContractAt("NodeBoosterV1", await nodeBoosterProxy.getAddress());
+
+        // Configure system pools after deployment
+        const sysPools = [payout1.address, payout2.address, payout3.address];
+        const usdcPcts = [3333, 3333, 3334]; // 33.33%, 33.33%, 33.34%
+        const avaxPcts = [3333, 3333, 3334]; // 33.33%, 33.33%, 33.34%
+        await nodeBooster.upSysPools(sysPools, usdcPcts, avaxPcts);
         await nodeBoosterProxy.waitForDeployment();
         nodeBooster = await ethers.getContractAt("NodeBoosterV1", await nodeBoosterProxy.getAddress());
 

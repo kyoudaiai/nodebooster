@@ -52,10 +52,14 @@ contract NodeBoosterV1 is
     IERC20 public avax0Token;
     
     /// @notice Payout wallet addresses
-    address public payoutWallet1;
-    address public payoutWallet2;
-    address public payoutWallet3;
-    
+    address[] public sysPools;
+
+    /// @notice USDC distribution percentages for payout wallets (in basis points)
+    uint256[] public usdcPcts;
+
+    /// @notice AVAX distribution percentages for payout wallets (in basis points)
+    uint256[] public avaxPcts;
+
     /// @notice Default referrer address for unregistered referrers
     address public defaultReferrer;
     
@@ -157,10 +161,10 @@ contract NodeBoosterV1 is
         uint256 timestamp
     );
     
-    event PayoutWalletUpdated(
-        uint256 indexed walletNumber, 
-        address oldWallet, 
-        address newWallet
+    event SysPoolsUpdated(
+        address[] sysPools,
+        uint256[] usdcPcts,
+        uint256[] avaxPcts
     );
     
     event EngineConfigured(
@@ -224,23 +228,14 @@ contract NodeBoosterV1 is
     /**
      * @dev Initialize the contract
      * @param _usdcToken USDC token contract address
-     * @param _avax0Token Avax0 token contract address
-     * @param _payoutWallet1 First payout wallet address
-     * @param _payoutWallet2 Second payout wallet address
-     * @param _payoutWallet3 Third payout wallet address
+     * @param _avax0Token Avax0 token contract address     
      */
     function initialize(
         address _usdcToken,
-        address _avax0Token,
-        address _payoutWallet1,
-        address _payoutWallet2,
-        address _payoutWallet3
+        address _avax0Token
     ) public initializer {
         require(_usdcToken != address(0), "USDC 0 addr");
-        require(_avax0Token != address(0), "AVAX0 0 addr");
-        require(_payoutWallet1 != address(0), "1:0 addr");
-        require(_payoutWallet2 != address(0), "2:0 addr");
-        require(_payoutWallet3 != address(0), "3:0 addr");
+        require(_avax0Token != address(0), "AVAX0 0 addr");        
 
         __Ownable_init(msg.sender);
         __Pausable_init();
@@ -252,28 +247,16 @@ contract NodeBoosterV1 is
         
         usdcToken = IERC20(_usdcToken);
         avax0Token = IERC20(_avax0Token);
-
-        payoutWallet1 = _payoutWallet1;
-        payoutWallet2 = _payoutWallet2;
-        payoutWallet3 = _payoutWallet3;
+        
         
         // Set deployer as default referrer initially and register them
         defaultReferrer = msg.sender;
         
         // Register the deployer as the first user (without fees)
-        Account storage deployerAccount = userAccounts[msg.sender];
-        deployerAccount.isRegistered = true;
-        deployerAccount.ref = address(0);
-        deployerAccount.tRefs = 0;
-        deployerAccount.tRefRewards = 0;
-        deployerAccount.cEngine = 0; // No engine initially
-        deployerAccount.engineStartTime = 0; // No engine start time
-        deployerAccount.lastClaimTime = 0;
-        deployerAccount.tClaimed = 0;
-        // Note: pending array and tDaysRewarded mapping are automatically initialized
+        addUser(msg.sender, address(0), 0);
         
-        totalUsers = 1;
-        usersList.push(msg.sender);                
+        // totalUsers = 1;
+        // usersList.push(msg.sender);                
     }
     
     /**
@@ -380,7 +363,7 @@ contract NodeBoosterV1 is
         
         // Distribute remaining USDC to payout wallets
         uint256 remainingAmount = REGISTRATION_FEE - referralReward;
-        _distributeToPayoutWallets(remainingAmount);
+        _distributeUSDC(remainingAmount);
         
         emit UserRegistered(msg.sender, finalReferrer, REGISTRATION_FEE, avax0Amount, block.timestamp);
     }
@@ -430,30 +413,32 @@ contract NodeBoosterV1 is
         
         emit EngineConfigured(_engineId, _name, _price, _hashPower, _rewardCapDays, _rewardCapPct, _isActive);
     }
-    
+
     /**
-     * @dev Update payout wallet addresses
-     * @param _walletNumber Wallet number (1, 2, or 3)
-     * @param _newWallet New wallet address
+     * @dev Update system pool addresses and distribution percentages
+     * @param _sysPools Array of system pool addresses
+     * @param _usdcPct Array of USDC distribution percentages
+     * @param _avaxPct Array of AVAX distribution percentages
      */
-    function updatePayoutWallet(uint256 _walletNumber, address _newWallet) external onlyOwner {
-        require(_newWallet != address(0), "0 addr");
-        require(_walletNumber >= 1 && _walletNumber <= 3, "<=>3");
-        
-        address oldWallet;
-        if (_walletNumber == 1) {
-            oldWallet = payoutWallet1;
-            payoutWallet1 = _newWallet;
-        } else if (_walletNumber == 2) {
-            oldWallet = payoutWallet2;
-            payoutWallet2 = _newWallet;
-        } else {
-            oldWallet = payoutWallet3;
-            payoutWallet3 = _newWallet;
+    function upSysPools(address[] memory _sysPools, uint256[] memory _usdcPct, uint256[] memory _avaxPct) external onlyOwner {
+        require(_sysPools.length > 0, "sysPools");
+        require(_usdcPct.length == _avaxPct.length && _avaxPct.length == _sysPools.length, "Length Mismatch");                
+                
+        // initialize arrays
+        delete sysPools;
+        delete usdcPcts;
+        delete avaxPcts;
+
+        // Add new values
+        for (uint256 i = 0; i < _sysPools.length; i++) {
+            require(_sysPools[i] != address(0), "0 addr");
+            sysPools.push(_sysPools[i]);
+            usdcPcts.push(_usdcPct[i]);
+            avaxPcts.push(_avaxPct[i]);
         }
-        
-        emit PayoutWalletUpdated(_walletNumber, oldWallet, _newWallet);
+        emit SysPoolsUpdated(_sysPools, _usdcPct, _avaxPct);
     }
+            
     
     /**
      * @dev Update default referrer address
@@ -550,7 +535,7 @@ contract NodeBoosterV1 is
         
         // If user currently has an engine, calculate and store pending rewards
         if (account.cEngine > 0) {
-            pendingRewards = calculatePendingRewards(msg.sender);
+            pendingRewards = calcPending(msg.sender);
             
             if (pendingRewards > 0) {
                 // Calculate days being rewarded before upgrade
@@ -610,7 +595,7 @@ contract NodeBoosterV1 is
         
         // Distribute remaining AVAX to payout wallets
         uint256 remainingAmount = upgradeCost - totalCommissions;
-        // TODO decide what to do with remaining amount. Currently, it stays in the contract.
+        _distributeAVAX(remainingAmount);
         
         emit Upgrade(msg.sender, oldEngine, targetEngine, pendingRewards);
     }
@@ -625,7 +610,7 @@ contract NodeBoosterV1 is
         Account storage account = userAccounts[msg.sender];
         
         // Calculate current pending rewards
-        uint256 currentPendingRewards = calculatePendingRewards(msg.sender);
+        uint256 curPending = calcPending(msg.sender);
         
         // Calculate total rewards from pending rewards array
         uint256 storedRewards = 0;
@@ -635,9 +620,9 @@ contract NodeBoosterV1 is
             }
         }
         
-        uint256 totalRewards = storedRewards + currentPendingRewards;
+        uint256 tRewards = storedRewards + curPending;
         
-        require(totalRewards > 0, "No rewards");
+        require(tRewards > 0, "No rewards");
         
         // Mark all pending rewards as completed and set withdrawal time
         for (uint256 i = 0; i < account.pending.length; i++) {
@@ -648,10 +633,10 @@ contract NodeBoosterV1 is
         }
         
         // Add current pending rewards as a new completed reward entry
-        if (currentPendingRewards > 0) {
+        if (curPending > 0) {
             // Calculate days being rewarded in this claim
-            uint256 lastRewardTime = account.lastClaimTime > 0 ? account.lastClaimTime : account.engineStartTime;
-            uint256 daysClaimed = (block.timestamp - lastRewardTime) / 1 days;
+            uint256 _last = account.lastClaimTime > 0 ? account.lastClaimTime : account.engineStartTime;
+            uint256 daysClaimed = (block.timestamp - _last) / 1 days;
             
             // Update total days rewarded for this engine (capped)
             Engine storage engine = engines[account.cEngine];
@@ -664,33 +649,33 @@ contract NodeBoosterV1 is
             
             account.pending.push(Rewards({
                 engineId: account.cEngine,
-                startTime: lastRewardTime,
+                startTime: _last,
                 endTime: block.timestamp,
                 withdrawalTime: block.timestamp,
-                amount: currentPendingRewards,
+                amount: curPending,
                 completed: true
             }));
         }
         
         // Update last claim time
         account.lastClaimTime = block.timestamp;
-        account.tClaimed += totalRewards;
+        account.tClaimed += tRewards;
         
         // Update rewards claimed for current engine (only current pending rewards)
-        if (currentPendingRewards > 0) {
-            account.tRewardsClaimedPerEngine[account.cEngine] += currentPendingRewards;
+        if (curPending > 0) {
+            account.tRewardsClaimedPerEngine[account.cEngine] += curPending;
         }
         
         // Note: Stored rewards were already counted per engine when they were created during upgrades
         
         // Update global stats
-        totalAvax0Distributed += totalRewards;
-        totalEngineRewards += totalRewards;
-        
+        totalAvax0Distributed += tRewards;
+        totalEngineRewards += tRewards;
+
         // Transfer AVAX0 rewards to user
-        avax0Token.safeTransfer(msg.sender, totalRewards);
+        avax0Token.safeTransfer(msg.sender, tRewards);
         
-        emit RewardsClaimed(msg.sender, totalRewards);
+        emit RewardsClaimed(msg.sender, tRewards);
     }
         
     
@@ -728,21 +713,21 @@ contract NodeBoosterV1 is
     
     /**
      * @dev Calculate cumulative cost from currentEngine to targetEngine (inclusive)
-     * @param currentEngine Starting engine (0 for no engine, 1-10 for engines)
-     * @param targetEngine Target engine (1-10)
+     * @param _cur Starting engine (0 for no engine, 1-10 for engines)
+     * @param _target Target engine (1-10)
      * @return Total cost in AVAX
      */
-    function calculateUpgradeCost(uint256 currentEngine, uint256 targetEngine) public view validEngine(targetEngine) returns (uint256) {
-        require(targetEngine > currentEngine, "must be higher");
+    function calculateUpgradeCost(uint256 _cur, uint256 _target) public view validEngine(_target) returns (uint256) {
+        require(_target > _cur, "must be higher");
 
-        if (currentEngine == 0) {
+        if (_cur == 0) {
             // First purchase - return cumulative cost
-            return getCumulativeCost(targetEngine);
+            return getCumulativeCost(_target);
         }
         
         // Upgrade cost - difference between engines
         uint256 totalCost = 0;
-        for (uint256 i = currentEngine + 1; i <= targetEngine; i++) {
+        for (uint256 i = _cur + 1; i <= _target; i++) {
             require(engines[i].isActive, "not active");
             totalCost += engines[i].price;
         }
@@ -768,7 +753,7 @@ contract NodeBoosterV1 is
      * @param user User address
      * @return Pending rewards in AVAX0
      */
-    function calculatePendingRewards(address user) public view returns (uint256) {
+    function calcPending(address user) public view returns (uint256) {
         Account storage account = userAccounts[user];
         
         if (!account.isRegistered || account.cEngine == 0 || account.engineStartTime == 0) {
@@ -1118,7 +1103,7 @@ contract NodeBoosterV1 is
             }
         }
         
-        currentRewards = calculatePendingRewards(user);
+        currentRewards = calcPending(user);
         totalClaimable = pendingRewards + currentRewards;
     }
     
@@ -1567,16 +1552,30 @@ contract NodeBoosterV1 is
     
     /**
      * @dev Distribute USDC to the three payout wallets equally
-     * @param _amount Total amount to distribute
+     * @param _amt Total amount to distribute
      */
-    function _distributeToPayoutWallets(uint256 _amount) internal {
-        uint256 amountPerWallet = _amount / 3;
-        uint256 remainder = _amount % 3;
-        
-        // Transfer equal amounts to each wallet
-        usdcToken.safeTransfer(payoutWallet1, amountPerWallet);
-        usdcToken.safeTransfer(payoutWallet2, amountPerWallet);
-        usdcToken.safeTransfer(payoutWallet3, amountPerWallet + remainder); // Last wallet gets any remainder
+    function _distributeUSDC(uint256 _amt) internal {
+        // we have sysPools and usdcPcts
+        for (uint256 i = 0; i < sysPools.length; i++) {
+            uint256 amt = (_amt * usdcPcts[i]) / BASIS_POINTS;
+            if (amt > 0) {
+                IERC20(usdcToken).safeTransfer(sysPools[i], amt);
+            }
+        }
+    }
+
+    /**
+     * @dev Distribute AVAX to the sysPools
+     * @param _amt Total amount to distribute
+    */
+    function _distributeAVAX(uint256 _amt) internal {
+        // we have sysPools and avaxPcts
+        for (uint256 i = 0; i < sysPools.length; i++) {
+            uint256 amt = (_amt * avaxPcts[i]) / BASIS_POINTS;
+            if (amt > 0) {
+                payable(sysPools[i]).transfer(amt);
+            }
+        }
     }
     
     /**
