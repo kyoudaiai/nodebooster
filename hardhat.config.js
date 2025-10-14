@@ -31,6 +31,21 @@ task("accounts", "Prints the list of accounts", async () => {
   }
 });
 
+task("size", "Check contract sizes", async () => {
+  const { exec } = require('child_process');
+  exec('node scripts/contract-size.js', (error, stdout, stderr) => {
+    if (error) {
+      console.error(`Error: ${error.message}`);
+      return;
+    }
+    if (stderr) {
+      console.error(`stderr: ${stderr}`);
+      return;
+    }
+    console.log(stdout);
+  });
+});
+
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
   solidity: {
@@ -43,6 +58,16 @@ module.exports = {
       viaIR: true,
       evmVersion: "paris"
     }
+  },
+  gasReporter: {
+    enabled: true,
+    currency: 'USD',
+  },
+  contractSizer: {
+    alphaSort: true,
+    disambiguatePaths: false,
+    runOnCompile: true,
+    strict: true,
   },
   networks: {
     local: {

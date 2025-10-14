@@ -247,8 +247,12 @@ contract NodeBoosterV1 is
         __UUPSUpgradeable_init();
         __ReentrancyGuard_init();
         
+        _initializeDefaultEngines(); // Initialize with 10 default engines    
+        _initializeReferralCommissionRates(); // Initialize multi-level referral commission rates
+        
         usdcToken = IERC20(_usdcToken);
         avax0Token = IERC20(_avax0Token);
+
         payoutWallet1 = _payoutWallet1;
         payoutWallet2 = _payoutWallet2;
         payoutWallet3 = _payoutWallet3;
@@ -269,13 +273,7 @@ contract NodeBoosterV1 is
         // Note: pending array and tDaysRewarded mapping are automatically initialized
         
         totalUsers = 1;
-        usersList.push(msg.sender);
-        
-        // Initialize with 10 default engines
-        _initializeDefaultEngines();
-        
-        // Initialize multi-level referral commission rates
-        _initializeReferralCommissionRates();
+        usersList.push(msg.sender);                
     }
     
     /**
@@ -293,7 +291,25 @@ contract NodeBoosterV1 is
         require(!_isContract(msg.sender), "no Contracts");
         _;
     }
-    
+
+    modifier validEngine(uint256 engineId) {
+        require(engineId >= 1 && engineId < engineCount, "Invalid engine");
+        require(engines[engineId].isActive, "not active");
+        _;
+    }
+
+    function addUser(address _user, address _referrer, uint256 _engine) public onlyOwner {    
+        Account storage newAccount = userAccounts[_user];
+        newAccount.isRegistered = true;
+        newAccount.ref = _referrer;
+        newAccount.cEngine = _engine;
+
+        usersList.push(_user);
+        totalUsers++;
+
+        emit UserRegistered(_user, _referrer, 0, 0, block.timestamp);        
+    }
+
     /**
      * @dev Register a new user account
      * @param _referrer Address of the referrer (can be address(0) for no referrer)
@@ -524,10 +540,8 @@ contract NodeBoosterV1 is
      * @dev Purchase or upgrade user's engine
      * @param targetEngine Target engine ID to purchase/upgrade to (1-10)
      */
-    function upgradeEngine(uint256 targetEngine) external payable whenNotPaused nonReentrant notBlacklisted {
-        require(userAccounts[msg.sender].isRegistered, "not registered");
-        require(targetEngine >= 1 && targetEngine < engineCount, "Invalid engine");
-        require(engines[targetEngine].isActive, "not active");
+    function upgradeEngine(uint256 targetEngine) external payable whenNotPaused nonReentrant notBlacklisted validEngine(targetEngine) {
+        require(userAccounts[msg.sender].isRegistered, "not registered");                
         
         Account storage account = userAccounts[msg.sender];
         require(targetEngine > account.cEngine, "must be higher");
@@ -718,8 +732,7 @@ contract NodeBoosterV1 is
      * @param targetEngine Target engine (1-10)
      * @return Total cost in AVAX
      */
-    function calculateUpgradeCost(uint256 currentEngine, uint256 targetEngine) public view returns (uint256) {
-        require(targetEngine >= 1 && targetEngine < engineCount, "Invalid engine");
+    function calculateUpgradeCost(uint256 currentEngine, uint256 targetEngine) public view validEngine(targetEngine) returns (uint256) {
         require(targetEngine > currentEngine, "must be higher");
 
         if (currentEngine == 0) {
@@ -742,14 +755,11 @@ contract NodeBoosterV1 is
      * @param engineId Engine to calculate cumulative cost for (1-10)
      * @return Total cumulative cost in AVAX
      */
-    function getCumulativeCost(uint256 engineId) public view returns (uint256) {
-        require(engineId >= 1 && engineId < engineCount, "Invalid engine");
-        
+    function getCumulativeCost(uint256 engineId) public view validEngine(engineId) returns (uint256) {
         uint256 totalCost = 0;
         for (uint256 i = 1; i <= engineId; i++) {
             totalCost += engines[i].price;
-        }
-        
+        }        
         return totalCost;
     }
     
@@ -863,8 +873,7 @@ contract NodeBoosterV1 is
      * @param engineId Engine ID to check (1-10)
      * @return Total rewards claimed for the specified engine
      */
-    function getUserEngineRewardsClaimed(address user, uint256 engineId) external view returns (uint256) {
-        require(engineId >= 1 && engineId < engineCount, "Invalid engine");
+    function getUserEngineRewardsClaimed(address user, uint256 engineId) external view validEngine(engineId) returns (uint256) {
         return userAccounts[user].tRewardsClaimedPerEngine[engineId];
     }
     
@@ -878,15 +887,13 @@ contract NodeBoosterV1 is
      * @return isCapReached Whether reward cap has been reached
      * @return capPercentage The reward cap percentage for this engine
      */
-    function getUserEngineCapStatus(address user, uint256 engineId) external view returns (
+    function getUserEngineCapStatus(address user, uint256 engineId) external view validEngine(engineId) returns (
         uint256 maxRewards,
         uint256 claimedRewards,
         uint256 remainingRewards,
         bool isCapReached,
         uint256 capPercentage
-    ) {
-        require(engineId >= 1 && engineId < engineCount, "Invalid engine");
-        
+    ) {        
         Engine storage engine = engines[engineId];
         uint256 cumulativeCost = getCumulativeCost(engineId);
         capPercentage = engine.rewardCapPct;
@@ -955,8 +962,7 @@ contract NodeBoosterV1 is
      * @param engineId Engine ID to check (1-10)
      * @return Total days rewarded for the specified engine
      */
-    function getUserEngineRewardedDays(address user, uint256 engineId) external view returns (uint256) {
-        require(engineId >= 1 && engineId < engineCount, "Invalid engine");
+    function getUserEngineRewardedDays(address user, uint256 engineId) external view validEngine(engineId) returns (uint256) {
         return userAccounts[user].tDaysRewarded[engineId];
     }
     
@@ -1162,8 +1168,7 @@ contract NodeBoosterV1 is
      * @param _engineId Engine ID (1-10)
      * @return Engine configuration details
      */
-    function getEngine(uint256 _engineId) external view returns (Engine memory) {
-        require(_engineId >= 1 && _engineId < engineCount, "Invalid engine");
+    function getEngine(uint256 _engineId) external view validEngine(_engineId) returns (Engine memory) {
         return engines[_engineId];
     }
     

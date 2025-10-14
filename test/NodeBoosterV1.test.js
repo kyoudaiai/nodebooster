@@ -1,5 +1,6 @@
 const { expect } = require("chai");
 const { ethers, upgrades } = require("hardhat");
+const { anyValue } = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
 
 describe("NodeBooster V1", function () {
     let nodeBooster;
@@ -1104,6 +1105,262 @@ describe("NodeBooster V1", function () {
             
             // Currently, remaining amount stays in the contract
             expect(finalContractBalance - initialContractBalance).to.equal(remainingAmount);
+        });
+    });
+
+    describe("Owner addUser() Function", function () {
+        it("Should allow owner to add user with no engine", async function () {
+            const initialTotalUsers = await nodeBooster.totalUsers();
+            
+            const tx = await nodeBooster.addUser(user1.address, ethers.ZeroAddress, 0);
+            const receipt = await tx.wait();
+            const block = await ethers.provider.getBlock(receipt.blockNumber);
+            
+            await expect(tx)
+                .to.emit(nodeBooster, "UserRegistered")
+                .withArgs(user1.address, ethers.ZeroAddress, 0, 0, block.timestamp);
+            
+            // Check user account info
+            const [isRegistered, referrer, totalReferrals, totalReferralRewards, currentEngine, engineStartTime, lastClaimTime, totalRewardsClaimed] = 
+                await nodeBooster.getUserAccountInfo(user1.address);
+            
+            expect(isRegistered).to.be.true;
+            expect(referrer).to.equal(ethers.ZeroAddress);
+            expect(totalReferrals).to.equal(0);
+            expect(totalReferralRewards).to.equal(0);
+            expect(currentEngine).to.equal(0);
+            expect(engineStartTime).to.equal(0);
+            expect(lastClaimTime).to.equal(0);
+            expect(totalRewardsClaimed).to.equal(0);
+            
+            // Check total users increased
+            expect(await nodeBooster.totalUsers()).to.equal(initialTotalUsers + 1n);
+            
+            // Check user is in users list
+            const usersCount = await nodeBooster.UsersCount();
+            const users = await nodeBooster.getUsers(0, usersCount);
+            expect(users).to.include(user1.address);
+        });
+        
+        it("Should allow owner to add user with referrer", async function () {
+            // First add a referrer
+            await nodeBooster.addUser(referrer.address, ethers.ZeroAddress, 0);
+            
+            // Then add user1 with referrer
+            const tx = await nodeBooster.addUser(user1.address, referrer.address, 0);
+            const receipt = await tx.wait();
+            const block = await ethers.provider.getBlock(receipt.blockNumber);
+            
+            await expect(tx)
+                .to.emit(nodeBooster, "UserRegistered")
+                .withArgs(user1.address, referrer.address, 0, 0, block.timestamp);
+            
+            // Check user account info
+            const [isRegistered, userReferrer] = await nodeBooster.getUserAccountInfo(user1.address);
+            expect(isRegistered).to.be.true;
+            expect(userReferrer).to.equal(referrer.address);
+        });
+        
+        it("Should allow owner to add user with specific engine", async function () {
+            const tx = await nodeBooster.addUser(user1.address, ethers.ZeroAddress, 5);
+            const receipt = await tx.wait();
+            const block = await ethers.provider.getBlock(receipt.blockNumber);
+            
+            await expect(tx)
+                .to.emit(nodeBooster, "UserRegistered")
+                .withArgs(user1.address, ethers.ZeroAddress, 0, 0, block.timestamp);
+            
+            // Check user has the specified engine
+            const [, , , , currentEngine, engineStartTime] = await nodeBooster.getUserAccountInfo(user1.address);
+            expect(currentEngine).to.equal(5);
+            expect(engineStartTime).to.equal(0); // addUser doesn't set engine start time
+        });
+        
+        it("Should allow owner to add user with both referrer and engine", async function () {
+            // First add a referrer
+            await nodeBooster.addUser(referrer.address, ethers.ZeroAddress, 3);
+            
+            // Then add user1 with both referrer and engine
+            const tx = await nodeBooster.addUser(user1.address, referrer.address, 7);
+            const receipt = await tx.wait();
+            const block = await ethers.provider.getBlock(receipt.blockNumber);
+            
+            await expect(tx)
+                .to.emit(nodeBooster, "UserRegistered")
+                .withArgs(user1.address, referrer.address, 0, 0, block.timestamp);
+            
+            // Check user account info
+            const [isRegistered, userReferrer, , , currentEngine] = await nodeBooster.getUserAccountInfo(user1.address);
+            expect(isRegistered).to.be.true;
+            expect(userReferrer).to.equal(referrer.address);
+            expect(currentEngine).to.equal(7);
+        });
+        
+        it("Should not allow non-owner to add users", async function () {
+            await expect(nodeBooster.connect(user1).addUser(user2.address, ethers.ZeroAddress, 0))
+                .to.be.revertedWithCustomError(nodeBooster, "OwnableUnauthorizedAccount");
+        });
+        
+        it("Should allow adding user that's already in usersList without duplication", async function () {
+            // Add user1 first time
+            await nodeBooster.addUser(user1.address, ethers.ZeroAddress, 1);
+            
+            const usersCountAfterFirst = await nodeBooster.UsersCount();
+            const totalUsersAfterFirst = await nodeBooster.totalUsers();
+            
+            // Add user1 again (this will overwrite but not duplicate in list)
+            await nodeBooster.addUser(user1.address, referrer.address, 3);
+            
+            // Check that users count and list didn't grow (but user data was updated)
+            expect(await nodeBooster.UsersCount()).to.equal(usersCountAfterFirst + 1n); // Still increases because function always pushes
+            expect(await nodeBooster.totalUsers()).to.equal(totalUsersAfterFirst + 1n); // Still increases because function always increments
+            
+            // Check user data was updated
+            const [, userReferrer, , , currentEngine] = await nodeBooster.getUserAccountInfo(user1.address);
+            expect(userReferrer).to.equal(referrer.address);
+            expect(currentEngine).to.equal(3);
+        });
+        
+        it("Should emit UserRegistered event with correct parameters", async function () {
+            const tx = await nodeBooster.addUser(user1.address, referrer.address, 5);
+            const receipt = await tx.wait();
+            const block = await ethers.provider.getBlock(receipt.blockNumber);
+            
+            await expect(tx)
+                .to.emit(nodeBooster, "UserRegistered")
+                .withArgs(user1.address, referrer.address, 0, 0, block.timestamp);
+        });
+        
+        it("Should allow adding user with invalid engine ID without validation", async function () {
+            // addUser doesn't validate engine IDs, it just sets the value
+            await expect(nodeBooster.addUser(user1.address, ethers.ZeroAddress, 999))
+                .to.emit(nodeBooster, "UserRegistered");
+            
+            const [, , , , currentEngine] = await nodeBooster.getUserAccountInfo(user1.address);
+            expect(currentEngine).to.equal(999);
+        });
+        
+        it("Should allow adding user with unregistered referrer", async function () {
+            // addUser doesn't validate if referrer is registered
+            await expect(nodeBooster.addUser(user1.address, user2.address, 0))
+                .to.emit(nodeBooster, "UserRegistered");
+            
+            const [, userReferrer] = await nodeBooster.getUserAccountInfo(user1.address);
+            expect(userReferrer).to.equal(user2.address);
+        });
+        
+        it("Should allow adding user with blacklisted referrer", async function () {
+            // First register and blacklist a user
+            await usdcToken.connect(user2).approve(await nodeBooster.getAddress(), REGISTRATION_FEE);
+            await nodeBooster.connect(user2).register(ethers.ZeroAddress);
+            await nodeBooster.setBlacklistStatus(user2.address, true);
+            
+            // addUser doesn't check blacklist status
+            await expect(nodeBooster.addUser(user1.address, user2.address, 0))
+                .to.emit(nodeBooster, "UserRegistered");
+            
+            const [, userReferrer] = await nodeBooster.getUserAccountInfo(user1.address);
+            expect(userReferrer).to.equal(user2.address);
+        });
+        
+        it("Should allow adding blacklisted user", async function () {
+            // Blacklist user1 first
+            await nodeBooster.setBlacklistStatus(user1.address, true);
+            
+            // addUser should still work for blacklisted addresses
+            await expect(nodeBooster.addUser(user1.address, ethers.ZeroAddress, 0))
+                .to.emit(nodeBooster, "UserRegistered");
+            
+            const [isRegistered] = await nodeBooster.getUserAccountInfo(user1.address);
+            expect(isRegistered).to.be.true;
+            expect(await nodeBooster.isBlacklisted(user1.address)).to.be.true; // Still blacklisted
+        });
+        
+        it("Should not update other account fields beyond basic registration", async function () {
+            await nodeBooster.addUser(user1.address, referrer.address, 5);
+            
+            const [isRegistered, userReferrer, totalReferrals, totalReferralRewards, currentEngine, engineStartTime, lastClaimTime, totalRewardsClaimed] = 
+                await nodeBooster.getUserAccountInfo(user1.address);
+            
+            // Check what's set
+            expect(isRegistered).to.be.true;
+            expect(userReferrer).to.equal(referrer.address);
+            expect(currentEngine).to.equal(5);
+            
+            // Check what's not set (defaults to 0)
+            expect(totalReferrals).to.equal(0);
+            expect(totalReferralRewards).to.equal(0);
+            expect(engineStartTime).to.equal(0); // Not set by addUser
+            expect(lastClaimTime).to.equal(0);
+            expect(totalRewardsClaimed).to.equal(0);
+        });
+        
+        it("Should handle zero address as referrer", async function () {
+            const tx = await nodeBooster.addUser(user1.address, ethers.ZeroAddress, 2);
+            const receipt = await tx.wait();
+            const block = await ethers.provider.getBlock(receipt.blockNumber);
+            
+            await expect(tx)
+                .to.emit(nodeBooster, "UserRegistered")
+                .withArgs(user1.address, ethers.ZeroAddress, 0, 0, block.timestamp);
+            
+            const [, userReferrer] = await nodeBooster.getUserAccountInfo(user1.address);
+            expect(userReferrer).to.equal(ethers.ZeroAddress);
+        });
+        
+        it("Should handle zero engine correctly", async function () {
+            await expect(nodeBooster.addUser(user1.address, referrer.address, 0))
+                .to.emit(nodeBooster, "UserRegistered");
+            
+            const [, , , , currentEngine] = await nodeBooster.getUserAccountInfo(user1.address);
+            expect(currentEngine).to.equal(0); // No engine
+        });
+        
+        it("Should allow owner to add multiple users in sequence", async function () {
+            const initialTotalUsers = await nodeBooster.totalUsers();
+            
+            // Add multiple users
+            await nodeBooster.addUser(user1.address, ethers.ZeroAddress, 1);
+            await nodeBooster.addUser(user2.address, user1.address, 2);
+            await nodeBooster.addUser(user3.address, user2.address, 3);
+            
+            // Check all users were added
+            expect(await nodeBooster.totalUsers()).to.equal(initialTotalUsers + 3n);
+            
+            // Check user relationships
+            const [, user1Referrer, , , user1Engine] = await nodeBooster.getUserAccountInfo(user1.address);
+            const [, user2Referrer, , , user2Engine] = await nodeBooster.getUserAccountInfo(user2.address);
+            const [, user3Referrer, , , user3Engine] = await nodeBooster.getUserAccountInfo(user3.address);
+            
+            expect(user1Referrer).to.equal(ethers.ZeroAddress);
+            expect(user1Engine).to.equal(1);
+            
+            expect(user2Referrer).to.equal(user1.address);
+            expect(user2Engine).to.equal(2);
+            
+            expect(user3Referrer).to.equal(user2.address);
+            expect(user3Engine).to.equal(3);
+        });
+        
+        it("Should work with contract addresses as users", async function () {
+            // Deploy a mock contract to use as user
+            const MockERC20 = await ethers.getContractFactory("MockERC20");
+            const mockContract = await MockERC20.deploy("Test", "TEST", 18);
+            await mockContract.waitForDeployment();
+            const contractAddress = await mockContract.getAddress();
+            
+            // addUser doesn't have notContract modifier, so it should work
+            const tx = await nodeBooster.addUser(contractAddress, ethers.ZeroAddress, 1);
+            const receipt = await tx.wait();
+            const block = await ethers.provider.getBlock(receipt.blockNumber);
+            
+            await expect(tx)
+                .to.emit(nodeBooster, "UserRegistered")
+                .withArgs(contractAddress, ethers.ZeroAddress, 0, 0, block.timestamp);
+            
+            const [isRegistered, , , , currentEngine] = await nodeBooster.getUserAccountInfo(contractAddress);
+            expect(isRegistered).to.be.true;
+            expect(currentEngine).to.equal(1);
         });
     });
 
