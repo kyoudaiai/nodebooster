@@ -1544,8 +1544,8 @@ contract NodeBoosterV1 is
      */
     function recoverToken(address token, address to, uint256 amount) external onlyOwner {
         require(token != address(this), "own tokens");
-        require(to != address(0), "Invalid recipient");
-        require(amount > 0, "Invalid amount");
+        require(to != address(0), "to: 0 addr");
+        require(amount > 0, "amt");
         IERC20(token).safeTransfer(to, amount);
         emit TokensWithdrawn(token, to, amount);        
     }
@@ -1555,8 +1555,8 @@ contract NodeBoosterV1 is
      * @param amount Amount of tokens to recover
      */
     function recoverFunds(uint256 amount) external onlyOwner {
-        require(amount > 0, "Invalid amount");
-        require(amount <= address(this).balance, "Insufficient funds");        
+        require(amount > 0, "amt");
+        require(amount <= address(this).balance, "funds");        
         payable(owner()).transfer(amount);        
     }
     
