@@ -185,7 +185,7 @@ contract NodeBoosterV1 is
         address indexed admin
     );
     
-    event OwnershipTransferInitiated(
+    event OwnerTransfer(
         address indexed previousOwner,
         address indexed newOwner
     );
@@ -1511,7 +1511,7 @@ contract NodeBoosterV1 is
         require(!isBlacklisted[newOwner], "blacklisted");
         
         address oldOwner = owner();
-        emit OwnershipTransferInitiated(oldOwner, newOwner);
+        emit OwnerTransfer(oldOwner, newOwner);
         
         super.transferOwnership(newOwner);
     }
@@ -1532,7 +1532,7 @@ contract NodeBoosterV1 is
         }
         
         address oldOwner = owner();
-        emit OwnershipTransferInitiated(oldOwner, newOwner);
+        emit OwnerTransfer(oldOwner, newOwner);
         
         super.transferOwnership(newOwner);
     }

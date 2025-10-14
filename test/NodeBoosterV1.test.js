@@ -455,7 +455,7 @@ describe("NodeBooster V1", function () {
     describe("Ownership Management", function () {
         it("Should allow owner to transfer ownership", async function () {
             await expect(nodeBooster.transferOwnership(user1.address))
-                .to.emit(nodeBooster, "OwnershipTransferInitiated")
+                .to.emit(nodeBooster, "OwnerTransfer")
                 .withArgs(owner.address, user1.address);
             
             expect(await nodeBooster.owner()).to.equal(user1.address);
