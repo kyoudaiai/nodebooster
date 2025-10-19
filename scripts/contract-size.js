@@ -46,6 +46,7 @@ async function main() {
     
     const contracts = [
         'NodeBoosterV1',
+        'NodeBoosterV2',
         'Avax0TokenV1',
         'Avax0TokenV2',
         'MockERC20',

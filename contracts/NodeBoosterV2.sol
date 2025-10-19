@@ -310,17 +310,19 @@ contract NodeBoosterV2 is
 
 
     function addUser(address _user, address _referrer, uint256 _engine) public onlyOwner {    
+        bool isRegistered = userAccounts[_user].isRegistered;
         Account storage newAccount = userAccounts[_user];
         newAccount.isRegistered = true;
         newAccount.ref = _referrer;
         newAccount.cEngine = _engine;
 
-        if (!userAccounts[_user].isRegistered) {
+        if (!isRegistered) {
             usersList.push(_user);
-            totalUsers++;        
-            emit UserRegistered(_user, _referrer, 0, 0, block.timestamp);        
+            totalUsers++;
+            emit UserRegistered(_user, _referrer, 0, 0, block.timestamp);
+        } else {
+            emit Upgrade(_user, 0, _engine, 0);
         }
-        else { emit Upgrade(_user, 0, _engine, 0); }
     }
 
     /**
@@ -454,7 +456,10 @@ contract NodeBoosterV2 is
         emit EngineConfigured(_engineId, _name, _price, _hashPower, _rewardCapDays, _rewardCapPct, _isActive);
     }
 
-    function setMinWD(uint _minWd) external onlyOwner { MIN_WD = _minWd; }
+    function setMinWD(uint _minWd) external onlyOwner { 
+        if(_minWd < 1) { revert MinWDIntervalNotMet(_minWd, 1); }
+        MIN_WD = _minWd; 
+    }
 
     /**
      * @dev Update system pool addresses and distribution percentages
@@ -825,10 +830,10 @@ contract NodeBoosterV2 is
         if (block.timestamp <= lastRewardTime) {
             return 0;
         }
-        // Enforce minimum interval: must be at least MIN_WD since last claim
-        if ((block.timestamp - lastRewardTime) < MIN_WD) {
-            return 0;
-        }
+        // // Enforce minimum interval: must be at least MIN_WD since last claim
+        // if ((block.timestamp - lastRewardTime) < MIN_WD) {
+        //     return 0;
+        // }
         // Check how many days have already been rewarded for this engine
         uint256 alreadyRewardedDays = account.tDaysRewarded[account.cEngine];
         uint256 maxDays = engine.rewardCapDays;
