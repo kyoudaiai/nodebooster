@@ -53,7 +53,7 @@ error NoContracts(address contractAddr);
  * - Pausable for emergency stops
  */
 
-contract NodeBoosterV1 is 
+contract NodeBoosterV2 is 
     Initializable,
     OwnableUpgradeable,
     PausableUpgradeable,
@@ -315,10 +315,12 @@ contract NodeBoosterV1 is
         newAccount.ref = _referrer;
         newAccount.cEngine = _engine;
 
-        usersList.push(_user);
-        totalUsers++;
-
-        emit UserRegistered(_user, _referrer, 0, 0, block.timestamp);        
+        if (!userAccounts[_user].isRegistered) {
+            usersList.push(_user);
+            totalUsers++;        
+            emit UserRegistered(_user, _referrer, 0, 0, block.timestamp);        
+        }
+        else { emit Upgrade(_user, 0, _engine, 0); }
     }
 
     /**
@@ -1498,7 +1500,7 @@ contract NodeBoosterV1 is
      * @dev Return contract version
      */
     function version() external pure returns (string memory) {
-        return "1.0.0";
+        return "2.0.0";
     }
     
     /**

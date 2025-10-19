@@ -9,34 +9,6 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-
-error MinWDIntervalNotMet(uint256 attempted, uint256 required);
-error InvalidEngine(uint256 engineId);
-error NoEngine(address user);
-error EngineNotActive(uint256 engineId);
-error InvalidEngineConfiguration(
-    uint256 engineId,
-    uint256 price,
-    uint256 hashPower,
-    uint256 rewardCapDays,
-    uint256 rewardCapPct,
-    uint256 refLvls,
-    string name
-);
-error EngineUpgradeNotAllowed(uint256 targetEngine, uint256 currentEngine);
-error InsufficientFunds(uint256 sent, uint256 required);
-error ZeroAddress();
-error SelfReferencing();
-error AlreadyRegistered(address user);
-error NotRegistered(address user);
-error Blacklisted(address user);
-error InvalidReferrer(address referrer);
-error InvalidSysPools();
-error InvalidReferralRates();
-error NoRewards();
-error NoContracts(address contractAddr);
-
-
 /**
  * @title NodeBoosterV1
  * @dev Upgradeable contract for NodeBooster platform on Avalanche C-Chain - Version 1
@@ -52,7 +24,6 @@ error NoContracts(address contractAddr);
  * - Upgradeable using UUPS pattern
  * - Pausable for emergency stops
  */
-
 contract NodeBoosterV1 is 
     Initializable,
     OwnableUpgradeable,
@@ -94,8 +65,6 @@ contract NodeBoosterV1 is
     
     /// @notice Number of active engines
     uint256 public engineCount;
-
-    uint public MIN_WD; // Minimum interval between reward claims
 
     /// @notice Rewards structure
     struct Rewards {
@@ -278,11 +247,10 @@ contract NodeBoosterV1 is
         
         usdcToken = IERC20(_usdcToken);
         avax0Token = IERC20(_avax0Token);
-                
+        
+        
         // Set deployer as default referrer initially and register them
         defaultReferrer = msg.sender;
-
-        MIN_WD = 1 days; // Minimum 1 day between reward claims
         
         // Register the deployer as the first user (without fees)
         addUser(msg.sender, address(0), 0);
@@ -295,7 +263,7 @@ contract NodeBoosterV1 is
      * @dev Modifier to check if user is not blacklisted
      */
     modifier notBlacklisted() {
-        if (isBlacklisted[msg.sender]) { revert Blacklisted(msg.sender); }        
+        require(!isBlacklisted[msg.sender], "blacklisted");
         _;
     }
     
@@ -303,7 +271,7 @@ contract NodeBoosterV1 is
      * @dev Modifier to check if address is not a contract
      */
     modifier notContract() {
-        if (_isContract(msg.sender)) { revert NoContracts(msg.sender); }
+        require(!_isContract(msg.sender), "no Contracts");
         _;
     }
 
@@ -326,12 +294,9 @@ contract NodeBoosterV1 is
      * @param _referrer Address of the referrer (can be address(0) for no referrer)
      */
     function register(address _referrer) external whenNotPaused nonReentrant notBlacklisted notContract {
-        if (userAccounts[msg.sender].isRegistered) { revert AlreadyRegistered(msg.sender); }
-        if (_referrer == msg.sender) { revert SelfReferencing(); }
-        // check usdc allowance
-        // uint256 allowance = usdcToken.allowance(msg.sender, address(this));
-        // if (allowance < REGISTRATION_FEE) { revert InsufficientFunds(allowance, REGISTRATION_FEE); }
-
+        require(!userAccounts[msg.sender].isRegistered, "already registered");
+        require(_referrer != msg.sender, "self refer");
+        
         address finalReferrer = _referrer;
         
         // If referrer is specified, validate and use default if needed
@@ -420,19 +385,12 @@ contract NodeBoosterV1 is
         uint256 _refLvls,
         bool _isActive
     ) external onlyOwner {        
-        if (
-            _engineId < 1 || _price < 1 || _hashPower < 1 || _rewardCapDays < 1 || _rewardCapPct < 1 || _refLvls < 1 || _refLvls > MAX_REFERRAL_LEVELS || bytes(_name).length == 0
-        ) {
-            revert InvalidEngineConfiguration(
-                _engineId,
-                _price,
-                _hashPower,
-                _rewardCapDays,
-                _rewardCapPct,
-                _refLvls,
-                _name
-            );
-        }        
+        require(_price > 0, "Price: 0");
+        require(_hashPower > 0, "HashPower: 0");
+        require(_rewardCapDays > 0, "RewardCapDays: 0");
+        require(_rewardCapPct > 0, "RewardCapPercentage: 0");
+        require(_refLvls <= MAX_REFERRAL_LEVELS, "ref Lvls > max");
+        require(bytes(_name).length > 0, "No Name");
         
         engines[_engineId] = Engine({
             isActive: _isActive,
@@ -452,8 +410,6 @@ contract NodeBoosterV1 is
         emit EngineConfigured(_engineId, _name, _price, _hashPower, _rewardCapDays, _rewardCapPct, _isActive);
     }
 
-    function setMinWD(uint _minWd) external onlyOwner { MIN_WD = _minWd; }
-
     /**
      * @dev Update system pool addresses and distribution percentages
      * @param _sysPools Array of system pool addresses
@@ -471,7 +427,7 @@ contract NodeBoosterV1 is
 
         // Add new values
         for (uint256 i = 0; i < _sysPools.length; i++) {
-            if (_sysPools[i] == address(0)) { revert ZeroAddress(); }
+            require(_sysPools[i] != address(0), "0 addr");
             sysPools.push(_sysPools[i]);
             usdcPcts.push(_usdcPct[i]);
             avaxPcts.push(_avaxPct[i]);
@@ -485,11 +441,11 @@ contract NodeBoosterV1 is
      * @param _newDefaultReferrer New default referrer address
      */
     function setDefaultReferrer(address _newDefaultReferrer) external onlyOwner {
-        if (_newDefaultReferrer == address(0)) {revert InvalidReferrer(_newDefaultReferrer);}
-        if (!userAccounts[_newDefaultReferrer].isRegistered) {revert NotRegistered(_newDefaultReferrer);}
-        if (isBlacklisted[_newDefaultReferrer]) {revert Blacklisted(_newDefaultReferrer);}
-
-        defaultReferrer = _newDefaultReferrer;
+        require(_newDefaultReferrer != address(0), "0 addr");
+        require(userAccounts[_newDefaultReferrer].isRegistered, "!reg");
+        require(!isBlacklisted[_newDefaultReferrer], "blkListd");
+                
+        defaultReferrer = _newDefaultReferrer;                
     }
         
     
@@ -523,10 +479,10 @@ contract NodeBoosterV1 is
      * @param _status True to blacklist, false to unblacklist
      */
     function setBlacklistStatus(address _user, bool _status) external onlyOwner {
-        if ( _user == address(0) ) { revert ZeroAddress(); }    
-        if (isBlacklisted[_user] == _status) { revert Blacklisted(_user); }
+        require(_user != address(0), "0 addr");
         require(_user != owner(), "owner");
-
+        require(isBlacklisted[_user] != _status, "is blkLstd");
+        
         isBlacklisted[_user] = _status;
         emit UserBlacklisted(_user, _status, msg.sender);
     }
@@ -542,7 +498,7 @@ contract NodeBoosterV1 is
         
         for (uint256 i = 0; i < _users.length; i++) {
             address user = _users[i];
-            if (user == address(0)) { revert ZeroAddress(); }
+            require(user != address(0), "0 addr");
             require(user != owner(), "owner");
             
             if (isBlacklisted[user] != _status) {
@@ -566,12 +522,12 @@ contract NodeBoosterV1 is
      * @param targetEngine Target engine ID to purchase/upgrade to (1-10)
      */
     function upgradeEngine(uint256 targetEngine) external payable whenNotPaused nonReentrant notBlacklisted {
-        if (targetEngine < 1 || targetEngine >= engineCount) { revert InvalidEngine(targetEngine); }
-        if (!engines[targetEngine].isActive) { revert EngineNotActive(targetEngine); }
-        if (!userAccounts[msg.sender].isRegistered) { revert NotRegistered(msg.sender); }
-
+        require(targetEngine >= 1 && targetEngine < engineCount, "Invalid engine");
+        require(engines[targetEngine].isActive, "not active");
+        require(userAccounts[msg.sender].isRegistered, "not registered");                
+        
         Account storage account = userAccounts[msg.sender];
-        if (targetEngine <= account.cEngine) { revert EngineUpgradeNotAllowed(targetEngine, account.cEngine); }
+        require(targetEngine > account.cEngine, "must be higher");
         
         uint256 pendingRewards = 0;
         
@@ -596,13 +552,10 @@ contract NodeBoosterV1 is
                 // Also update the rewards claimed per engine when storing pending rewards
                 account.tRewardsClaimedPerEngine[account.cEngine] += pendingRewards;
                 
-                // Calculate the exact end time for the rewarded period
-                uint256 rewardedPeriodEnd = lastRewardTime + (actualDaysPending * 1 days);
-                
                 account.pending.push(Rewards({
                     engineId: account.cEngine,
                     startTime: lastRewardTime,
-                    endTime: rewardedPeriodEnd,
+                    endTime: block.timestamp,
                     withdrawalTime: 0,
                     amount: pendingRewards,
                     completed: false
@@ -621,8 +574,7 @@ contract NodeBoosterV1 is
         }
         
         // Transfer AVAX payment
-        if (msg.value < upgradeCost) { revert InsufficientFunds(msg.value, upgradeCost); }
-        
+        require(msg.value >= upgradeCost, "funds");
         
         // Return excess AVAX if any
         if (msg.value > upgradeCost) {
@@ -650,9 +602,9 @@ contract NodeBoosterV1 is
      * @dev Claim accumulated rewards
      */
     function claimRewards() external whenNotPaused nonReentrant notBlacklisted {
-        if (!userAccounts[msg.sender].isRegistered) { revert NotRegistered(msg.sender); }
-        if (userAccounts[msg.sender].cEngine == 0) { revert NoEngine(msg.sender); }
-
+        require(userAccounts[msg.sender].isRegistered, "not registered");
+        require(userAccounts[msg.sender].cEngine > 0, "No engine");
+        
         Account storage account = userAccounts[msg.sender];
         
         // Calculate current pending rewards
@@ -667,18 +619,8 @@ contract NodeBoosterV1 is
         }
         
         uint256 tRewards = storedRewards + curPending;
-
-       if (tRewards == 0) { revert NoRewards(); }
-
-        // Always check minimum interval if there are current pending rewards
-        if (curPending > 0) {
-            uint256 _last = account.lastClaimTime > 0 ? account.lastClaimTime : account.engineStartTime;
-            uint256 secondsElapsed = block.timestamp > _last ? (block.timestamp - _last) : 0;
-            
-            if (secondsElapsed < MIN_WD) {
-                revert MinWDIntervalNotMet(secondsElapsed, MIN_WD);
-            }
-        }
+        
+        require(tRewards > 0, "No rewards");
         
         // Mark all pending rewards as completed and set withdrawal time
         for (uint256 i = 0; i < account.pending.length; i++) {
@@ -690,13 +632,15 @@ contract NodeBoosterV1 is
         
         // Add current pending rewards as a new completed reward entry
         if (curPending > 0) {
+            // Calculate days being rewarded in this claim
             uint256 _last = account.lastClaimTime > 0 ? account.lastClaimTime : account.engineStartTime;
-            uint256 secondsElapsed = block.timestamp > _last ? (block.timestamp - _last) : 0;
+            uint256 daysClaimed = (block.timestamp - _last) / 1 days;
+            
+            // Update total days rewarded for this engine (capped)
             Engine storage engine = engines[account.cEngine];
             uint256 alreadyRewardedDays = account.tDaysRewarded[account.cEngine];
-            uint256 maxDays = engine.rewardCapDays;
-            uint256 remainingDays = maxDays > alreadyRewardedDays ? maxDays - alreadyRewardedDays : 0;
-            uint256 daysClaimed = secondsElapsed / 1 days;
+            uint256 remainingDays = engine.rewardCapDays > alreadyRewardedDays ? 
+                engine.rewardCapDays - alreadyRewardedDays : 0;
             uint256 actualDaysClaimed = daysClaimed > remainingDays ? remainingDays : daysClaimed;
             
             account.tDaysRewarded[account.cEngine] += actualDaysClaimed;
@@ -709,9 +653,10 @@ contract NodeBoosterV1 is
                 amount: curPending,
                 completed: true
             }));
-            
-            account.lastClaimTime = block.timestamp;
         }
+        
+        // Update last claim time
+        account.lastClaimTime = block.timestamp;
         account.tClaimed += tRewards;
         
         // Update rewards claimed for current engine (only current pending rewards)
@@ -771,9 +716,9 @@ contract NodeBoosterV1 is
      * @return Total cost in AVAX
      */
     function calculateUpgradeCost(uint256 _cur, uint256 _target) public view returns (uint256) {
-        if (_target < 1 || _target > engineCount) { revert InvalidEngine(_target); }
-        if (!engines[_target].isActive) { revert EngineNotActive(_target); }
-        if (_target <= _cur) { revert EngineUpgradeNotAllowed(_target, _cur); }
+        require(_target >= 1 && _target < engineCount, "Invalid engine");
+        require(engines[_target].isActive, "not active");
+        require(_target > _cur, "must be higher");
 
         if (_cur == 0) {
             // First purchase - return cumulative cost
@@ -782,8 +727,8 @@ contract NodeBoosterV1 is
         
         // Upgrade cost - difference between engines
         uint256 totalCost = 0;
-        for (uint256 i = _cur + 1; i <= _target; i++) {            
-            if (!engines[i].isActive) { revert EngineNotActive(i); }
+        for (uint256 i = _cur + 1; i <= _target; i++) {
+            require(engines[i].isActive, "not active");
             totalCost += engines[i].price;
         }
         
@@ -796,8 +741,8 @@ contract NodeBoosterV1 is
      * @return Total cumulative cost in AVAX
      */
     function getCumulativeCost(uint256 engineId) public view returns (uint256) {
-        if (engineId < 1 || engineId > engineCount) { revert InvalidEngine(engineId); }
-        if (!engines[engineId].isActive) { revert EngineNotActive(engineId); }
+        require(engineId >= 1 && engineId < engineCount, "Invalid engine");
+        require(engines[engineId].isActive, "not active");
         uint256 totalCost = 0;
         for (uint256 i = 1; i <= engineId; i++) {
             totalCost += engines[i].price;
@@ -812,50 +757,65 @@ contract NodeBoosterV1 is
      */
     function calcPending(address user) public view returns (uint256) {
         Account storage account = userAccounts[user];
+        
         if (!account.isRegistered || account.cEngine == 0 || account.engineStartTime == 0) {
             return 0; // No engine or not registered
         }
+        
         Engine storage engine = engines[account.cEngine];
         if (!engine.isActive) {
             return 0;
         }
+        
+        // Calculate days since last claim (or engine start if never claimed)
         uint256 lastRewardTime = account.lastClaimTime > 0 ? account.lastClaimTime : account.engineStartTime;
-        if (block.timestamp <= lastRewardTime) {
+        uint256 daysSinceLastClaim = (block.timestamp - lastRewardTime) / 1 days;
+        
+        if (daysSinceLastClaim == 0) {
             return 0;
         }
-        // Enforce minimum interval: must be at least MIN_WD since last claim
-        if ((block.timestamp - lastRewardTime) < MIN_WD) {
-            return 0;
-        }
+        
         // Check how many days have already been rewarded for this engine
         uint256 alreadyRewardedDays = account.tDaysRewarded[account.cEngine];
+        
+        // Calculate remaining days available for rewards (cap at rewardCapDays)
         uint256 maxDays = engine.rewardCapDays;
         if (alreadyRewardedDays >= maxDays) {
             return 0; // Already reached maximum reward cap for this engine
         }
-        // Calculate the max seconds that can be rewarded (capped by remaining days)
+        
         uint256 remainingDays = maxDays - alreadyRewardedDays;
-        uint256 maxRewardableSeconds = remainingDays * 1 days;
-        uint256 secondsElapsed = block.timestamp - lastRewardTime;
-        if (secondsElapsed > maxRewardableSeconds) {
-            secondsElapsed = maxRewardableSeconds;
+        uint256 rewardableDays = daysSinceLastClaim > remainingDays ? remainingDays : daysSinceLastClaim;
+        
+        if (rewardableDays == 0) {
+            return 0;
         }
+        
         // Get cumulative cost for this engine
         uint256 cumulativeCost = getCumulativeCost(account.cEngine);
+        
         // Calculate maximum allowed rewards for this engine using engine's cap percentage
         uint256 maxRewardsForEngine = (cumulativeCost * engine.rewardCapPct) / 100;
+        
+        // Check how much has already been claimed for this engine
         uint256 alreadyClaimedForEngine = account.tRewardsClaimedPerEngine[account.cEngine];
+        
+        // If already reached reward cap, return 0
         if (alreadyClaimedForEngine >= maxRewardsForEngine) {
             return 0;
         }
-        // Calculate per-second reward
-        uint256 dailyRewardBase = (cumulativeCost * engine.rewardCapPct) / (405 * 100);
-        uint256 dailyReward = (dailyRewardBase * (100 + engine.hashPower)) / 100;
-        uint256 perSecondReward = dailyReward / 1 days;
-        uint256 calculatedRewards = perSecondReward * secondsElapsed;
+        
+        // Calculate daily reward: (cumulativeCost * rewardCapPct / 405 days) * (1 + hashPower%)
+        // Formula: ((cumulativeCost * rewardCapPct / 100) / 405) * (100 + hashPower) / 100
+        uint256 dailyRewardBase = (cumulativeCost * engine.rewardCapPct) / (405 * 100); // Percentage divided by 405 days
+        uint256 dailyReward = (dailyRewardBase * (100 + engine.hashPower)) / 100; // Apply hashPower multiplier
+        
+        uint256 calculatedRewards = dailyReward * rewardableDays;
+        
         // Cap the rewards to not exceed maximum total for this engine
         uint256 remainingRewardsAllowed = maxRewardsForEngine - alreadyClaimedForEngine;
         uint256 finalRewards = calculatedRewards > remainingRewardsAllowed ? remainingRewardsAllowed : calculatedRewards;
+        
         return finalRewards;
     }
     
@@ -923,9 +883,8 @@ contract NodeBoosterV1 is
         bool isCapReached,
         uint256 capPercentage
     ) {
-        if (engineId < 1 || engineId > engineCount) { revert InvalidEngine(engineId); }
-        if (!engines[engineId].isActive) { revert EngineNotActive(engineId); }
-
+        require(engineId >= 1 && engineId < engineCount, "Invalid engine");
+        require(engines[engineId].isActive, "not active");
         Engine storage engine = engines[engineId];
         uint256 cumulativeCost = getCumulativeCost(engineId);
         capPercentage = engine.rewardCapPct;
@@ -995,8 +954,8 @@ contract NodeBoosterV1 is
      * @return Total days rewarded for the specified engine
      */
     function getUserEngineRewardedDays(address user, uint256 engineId) external view returns (uint256) {
-        if (engineId < 1 || engineId > engineCount) { revert InvalidEngine(engineId); }
-        if (!engines[engineId].isActive) { revert EngineNotActive(engineId); }
+        require(engineId >= 1 && engineId < engineCount, "Invalid engine");
+        require(engines[engineId].isActive, "not active");
         return userAccounts[user].tDaysRewarded[engineId];
     }
     
@@ -1167,7 +1126,7 @@ contract NodeBoosterV1 is
     
     /**
      * @dev Get count of pending (unclaimed) rewards for a user
-     * @param user User address to check
+     * @param user User address
      * @return Number of unclaimed reward entries
      */
     function getPendingRewardsCount(address user) external view returns (uint256) {
@@ -1203,8 +1162,8 @@ contract NodeBoosterV1 is
      * @return Engine configuration details
      */
     function getEngine(uint256 _engineId) external view returns (Engine memory) {
-        if(_engineId < 1 || _engineId > engineCount) { revert InvalidEngine(_engineId); }
-        if (!engines[_engineId].isActive) { revert EngineNotActive(_engineId); }
+        require(_engineId >= 1 && _engineId < engineCount, "Invalid engine");
+        require(engines[_engineId].isActive, "not active");
         return engines[_engineId];
     }
     
@@ -1547,10 +1506,10 @@ contract NodeBoosterV1 is
      * @param newOwner Address of the new owner
      */
     function transferOwnership(address newOwner) public override onlyOwner {
-        if (newOwner == address(0)) { revert ZeroAddress(); }
-        if (newOwner == owner()) { revert SelfReferencing(); }
-        if (isBlacklisted[newOwner]) { revert Blacklisted(newOwner); }
-
+        require(newOwner != address(0), "0 addr");
+        require(newOwner != owner(), "same owner");
+        require(!isBlacklisted[newOwner], "blacklisted");
+        
         address oldOwner = owner();
         emit OwnerTransfer(oldOwner, newOwner);
         
@@ -1563,8 +1522,8 @@ contract NodeBoosterV1 is
      * @dev This function can only be called by the current owner
      */
     function emergencyTransferOwnership(address newOwner) external onlyOwner {
-        if (newOwner == address(0)) { revert ZeroAddress(); }
-        if (newOwner == owner()) { revert SelfReferencing(); }        
+        require(newOwner != address(0), "0 addr");
+        require(newOwner != owner(), "same owner");
         
         // Remove blacklist status from new owner if blacklisted
         if (isBlacklisted[newOwner]) {

@@ -56,6 +56,33 @@ describe("NodeBooster V1", function () {
         const avaxPcts = [3333, 3333, 3334]; // 33.33%, 33.33%, 33.34%
         await nodeBooster.upSysPools(sysPools, usdcPcts, avaxPcts);
         
+        // Configure engines after deployment
+        const engines = [
+            { id: 1, name: "Starter Engine", price: "2", hashPower: 1, rewardCapDays: 405, rewardCapPct: 450, refLvls: 1 },
+            { id: 2, name: "Basic Engine", price: "4", hashPower: 2, rewardCapDays: 405, rewardCapPct: 450, refLvls: 2 },
+            { id: 3, name: "Standard Engine", price: "8", hashPower: 4, rewardCapDays: 405, rewardCapPct: 450, refLvls: 3 },
+            { id: 4, name: "Advanced Engine", price: "12", hashPower: 6, rewardCapDays: 405, rewardCapPct: 450, refLvls: 4 },
+            { id: 5, name: "Professional Engine", price: "20", hashPower: 8, rewardCapDays: 405, rewardCapPct: 450, refLvls: 5 },
+            { id: 6, name: "Expert Engine", price: "36", hashPower: 10, rewardCapDays: 405, rewardCapPct: 450, refLvls: 6 },
+            { id: 7, name: "Master Engine", price: "75", hashPower: 12, rewardCapDays: 405, rewardCapPct: 450, refLvls: 10 },
+            { id: 8, name: "Elite Engine", price: "115", hashPower: 14, rewardCapDays: 405, rewardCapPct: 450, refLvls: 10 },
+            { id: 9, name: "Supreme Engine", price: "195", hashPower: 16, rewardCapDays: 405, rewardCapPct: 450, refLvls: 10 },
+            { id: 10, name: "Ultimate Engine", price: "310", hashPower: 18, rewardCapDays: 405, rewardCapPct: 450, refLvls: 10 }
+        ];
+
+        for (const engine of engines) {
+            await nodeBooster.configureEngine(
+                engine.id,
+                engine.name,
+                ethers.parseEther(engine.price),
+                engine.hashPower,
+                engine.rewardCapDays,
+                engine.rewardCapPct,
+                engine.refLvls,
+                true // isActive
+            );
+        }
+        
         // Mint USDC to users
         await usdcToken.mint(user1.address, ethers.parseUnits("1000", 6)); // 1000 USDC
         await usdcToken.mint(user2.address, ethers.parseUnits("1000", 6));
@@ -191,13 +218,13 @@ describe("NodeBooster V1", function () {
             
             await usdcToken.connect(user1).approve(await nodeBooster.getAddress(), REGISTRATION_FEE);
             await expect(nodeBooster.connect(user1).register(ethers.ZeroAddress))
-                .to.be.revertedWith("already registered");
+                .to.be.revertedWithCustomError(nodeBooster, "AlreadyRegistered");
         });
         
         it("Should not allow self-referral", async function () {
             await usdcToken.connect(user1).approve(await nodeBooster.getAddress(), REGISTRATION_FEE);
             await expect(nodeBooster.connect(user1).register(user1.address))
-                .to.be.revertedWith("self refer");
+                .to.be.revertedWithCustomError(nodeBooster, "SelfReferencing");
         });
         
         it("Should use default referrer when referrer is not registered", async function () {
@@ -249,23 +276,23 @@ describe("NodeBooster V1", function () {
         
         it("Should validate engine parameters", async function () {
             await expect(nodeBooster.configureEngine(11, "", ethers.parseEther("1"), 100, 30, 450, 5, true))
-                .to.be.revertedWith("No Name");
+                .to.be.revertedWithCustomError(nodeBooster, "InvalidEngineConfiguration");
             
             await expect(nodeBooster.configureEngine(11, "Test", 0, 100, 30, 450, 5, true))
-                .to.be.revertedWith("Price: 0");
+                .to.be.revertedWithCustomError(nodeBooster, "InvalidEngineConfiguration");
             
             await expect(nodeBooster.configureEngine(11, "Test", ethers.parseEther("1"), 0, 30, 450, 5, true))
-                .to.be.revertedWith("HashPower: 0");
+                .to.be.revertedWithCustomError(nodeBooster, "InvalidEngineConfiguration");
             
             await expect(nodeBooster.configureEngine(11, "Test", ethers.parseEther("1"), 100, 0, 450, 5, true))
-                .to.be.revertedWith("RewardCapDays: 0");
+                .to.be.revertedWithCustomError(nodeBooster, "InvalidEngineConfiguration");
             
             await expect(nodeBooster.configureEngine(11, "Test", ethers.parseEther("1"), 100, 30, 0, 5, true))
-                .to.be.revertedWith("RewardCapPercentage: 0");
+                .to.be.revertedWithCustomError(nodeBooster, "InvalidEngineConfiguration");
             
-            // Note: Engine ID validation is dynamic based on engineCount, so this test might need adjustment
-            // await expect(nodeBooster.configureEngine(1000, "Test", ethers.parseEther("1"), 100, 30, 450, 5, true))
-            //     .to.be.revertedWith("Invalid engine ID");
+            // Test invalid engine ID (0 or less)
+            await expect(nodeBooster.configureEngine(0, "Test", ethers.parseEther("1"), 100, 30, 450, 5, true))
+                .to.be.revertedWithCustomError(nodeBooster, "InvalidEngineConfiguration");
         });
     });
     
@@ -288,7 +315,7 @@ describe("NodeBooster V1", function () {
         
         it("Should not allow setting unregistered user as default referrer", async function () {
             await expect(nodeBooster.setDefaultReferrer(user3.address))
-                .to.be.revertedWith("!reg");
+                .to.be.revertedWithCustomError(nodeBooster, "NotRegistered");
         });
         
         it("Should not allow setting blacklisted user as default referrer", async function () {
@@ -298,7 +325,7 @@ describe("NodeBooster V1", function () {
             await nodeBooster.setBlacklistStatus(user1.address, true);
             
             await expect(nodeBooster.setDefaultReferrer(user1.address))
-                .to.be.revertedWith("blkListd");
+                .to.be.revertedWithCustomError(nodeBooster, "Blacklisted");
         });
         
         it("Should use default referrer when no referrer is specified", async function () {
@@ -310,6 +337,49 @@ describe("NodeBooster V1", function () {
             const [, userReferrer] = await nodeBooster.getUserAccountInfo(user1.address);
             const defaultReferrer = await nodeBooster.defaultReferrer();
             expect(userReferrer).to.equal(defaultReferrer);
+        });
+    });
+    
+    describe("MIN_WD Configuration", function () {
+        it("Should initialize MIN_WD to 1 day by default", async function () {
+            const minWD = await nodeBooster.MIN_WD();
+            expect(minWD).to.equal(24 * 60 * 60); // 1 day in seconds
+        });
+        
+        it("Should allow owner to update MIN_WD", async function () {
+            const newMinWD = 12 * 60 * 60; // 12 hours
+            await nodeBooster.setMinWD(newMinWD);
+            
+            const updatedMinWD = await nodeBooster.MIN_WD();
+            expect(updatedMinWD).to.equal(newMinWD);
+        });
+        
+        it("Should not allow non-owner to update MIN_WD", async function () {
+            const newMinWD = 12 * 60 * 60; // 12 hours
+            await expect(nodeBooster.connect(user1).setMinWD(newMinWD))
+                .to.be.revertedWithCustomError(nodeBooster, "OwnableUnauthorizedAccount");
+        });
+        
+        it("Should allow setting MIN_WD to different values and affect claim intervals", async function () {
+            // Set MIN_WD to 2 hours for faster testing
+            const customMinWD = 2 * 60 * 60; // 2 hours
+            await nodeBooster.setMinWD(customMinWD);
+            
+            // Register and purchase engine
+            await usdcToken.connect(user1).approve(await nodeBooster.getAddress(), REGISTRATION_FEE);
+            await nodeBooster.connect(user1).register(ethers.ZeroAddress);
+            const engine1Price = ethers.parseEther("2");
+            await nodeBooster.connect(user1).upgradeEngine(1, { value: engine1Price });
+            
+            // Should not have rewards before MIN_WD
+            await ethers.provider.send("evm_increaseTime", [customMinWD - 60]); // 2h - 1min
+            await ethers.provider.send("evm_mine");
+            expect(await nodeBooster.calcPending(user1.address)).to.equal(0);
+            
+            // Should have rewards after MIN_WD
+            await ethers.provider.send("evm_increaseTime", [customMinWD]); // +2h
+            await ethers.provider.send("evm_mine");
+            expect(await nodeBooster.calcPending(user1.address)).to.be.gt(0);
         });
     });
     
@@ -350,7 +420,7 @@ describe("NodeBooster V1", function () {
             // Try to register user2
             await usdcToken.connect(user2).approve(await nodeBooster.getAddress(), REGISTRATION_FEE);
             await expect(nodeBooster.connect(user2).register(ethers.ZeroAddress))
-                .to.be.revertedWith("blacklisted");
+                .to.be.revertedWithCustomError(nodeBooster, "Blacklisted");
         });
         
         it("Should prevent using blacklisted referrer", async function () {
@@ -472,7 +542,7 @@ describe("NodeBooster V1", function () {
             await nodeBooster.setBlacklistStatus(user1.address, true);
             
             await expect(nodeBooster.transferOwnership(user1.address))
-                .to.be.revertedWith("blacklisted");
+                .to.be.revertedWithCustomError(nodeBooster, "Blacklisted");
         });
         
         it("Should allow emergency ownership transfer to blacklisted address", async function () {
@@ -496,7 +566,7 @@ describe("NodeBooster V1", function () {
         
         it("Should not allow claiming rewards without an engine", async function () {
             await expect(nodeBooster.connect(user1).claimRewards())
-                .to.be.revertedWith("No engine");
+                .to.be.revertedWithCustomError(nodeBooster, "NoEngine");
         });
         
         it("Should calculate cumulative cost correctly", async function () {
@@ -566,13 +636,13 @@ describe("NodeBooster V1", function () {
             
             await expect(nodeBooster.connect(user1).claimRewards())
                 .to.emit(nodeBooster, "RewardsClaimed")
-                .withArgs(user1.address, pendingRewards);
+                .withArgs(user1.address, anyValue); // Use anyValue since per-second precision may vary slightly
             
             const finalBalance = await avax0Token.balanceOf(user1.address);
-            expect(finalBalance - initialBalance).to.equal(pendingRewards);
+            expect(finalBalance - initialBalance).to.be.closeTo(pendingRewards, ethers.parseEther("0.001"));
             
             const [, , , , , , , totalRewardsClaimed] = await nodeBooster.getUserAccountInfo(user1.address);
-            expect(totalRewardsClaimed).to.equal(pendingRewards);
+            expect(totalRewardsClaimed).to.be.closeTo(pendingRewards, ethers.parseEther("0.001"));
             
             // Check that all pending rewards are marked as completed
             const totalPending = await nodeBooster.calcPending(user1.address);
@@ -593,11 +663,11 @@ describe("NodeBooster V1", function () {
             
             await expect(nodeBooster.connect(user1).upgradeEngine(2, { value: upgradeCost }))
                 .to.emit(nodeBooster, "Upgrade")
-                .withArgs(user1.address, 1, 2, pendingBefore);
+                .withArgs(user1.address, 1, 2, anyValue); // Use anyValue for per-second precision variation
             
             // Check that pending rewards are stored in the array
             const totalPending = await nodeBooster.getTotalPendingRewards(user1.address);
-            expect(totalPending).to.equal(pendingBefore);
+            expect(totalPending).to.be.closeTo(pendingBefore, ethers.parseEther("0.001"));
             
             const [, , , , currentEngine] = await nodeBooster.getUserAccountInfo(user1.address);
             expect(currentEngine).to.equal(2);
@@ -623,7 +693,7 @@ describe("NodeBooster V1", function () {
             const insufficientPayment = upgradeCost - ethers.parseEther("0.1");
             
             await expect(nodeBooster.connect(user1).upgradeEngine(1, { value: insufficientPayment }))
-                .to.be.revertedWith("funds");
+                .to.be.revertedWithCustomError(nodeBooster, "InsufficientFunds");
         });
         
         it("Should revert upgrade to lower or same engine", async function () {
@@ -632,7 +702,7 @@ describe("NodeBooster V1", function () {
             
             // Try to "upgrade" to same engine
             await expect(nodeBooster.connect(user1).upgradeEngine(1, { value: 0 }))
-                .to.be.revertedWith("must be higher");
+                .to.be.revertedWithCustomError(nodeBooster, "EngineUpgradeNotAllowed");
         });
         
         it("Should track rewards history correctly", async function () {
@@ -804,7 +874,7 @@ describe("NodeBooster V1", function () {
             
             // Check engine 1 claimed rewards
             const engine1Claimed = await nodeBooster.getUserEngineRewardsClaimed(user1.address, 1);
-            expect(engine1Claimed).to.equal(engine1Rewards);
+            expect(engine1Claimed).to.be.closeTo(engine1Rewards, ethers.parseEther("0.001"));
             
             // Upgrade to engine 2
             const upgradeCost = await nodeBooster.calculateUpgradeCost(1, 2);
@@ -821,7 +891,7 @@ describe("NodeBooster V1", function () {
             const engine1ClaimedAfter = await nodeBooster.getUserEngineRewardsClaimed(user1.address, 1);
             const engine2ClaimedAfter = await nodeBooster.getUserEngineRewardsClaimed(user1.address, 2);
             
-            expect(engine1ClaimedAfter).to.equal(engine1Rewards); // Should remain the same
+            expect(engine1ClaimedAfter).to.be.closeTo(engine1Rewards, ethers.parseEther("0.001")); // Should remain the same
             expect(engine2ClaimedAfter).to.be.gt(0); // Should have some rewards for engine 2
             
             // Total rewards claimed should be sum of both engines
@@ -884,7 +954,7 @@ describe("NodeBooster V1", function () {
         
         it("Should validate reward cap percentage in configureEngine", async function () {
             await expect(nodeBooster.configureEngine(13, "Invalid Engine", ethers.parseEther("1"), 1, 405, 0, 5, true))
-                .to.be.revertedWith("RewardCapPercentage: 0");
+                .to.be.revertedWithCustomError(nodeBooster, "InvalidEngineConfiguration");
         });
         
         it("Should include cap percentage in getUserEngineCapStatus", async function () {
@@ -1419,6 +1489,250 @@ describe("NodeBooster V1", function () {
             expect(level2.length).to.equal(2);
             expect(level2).to.include(user2.address);
             expect(level2).to.include(user3.address);
+        });
+    });
+
+    describe("Per-Second Rewards and Minimum Interval", function () {
+        beforeEach(async function () {
+            // Register user1 and purchase engine 1
+            await usdcToken.connect(user1).approve(await nodeBooster.getAddress(), REGISTRATION_FEE);
+            await nodeBooster.connect(user1).register(ethers.ZeroAddress);
+            
+            const engine1Price = ethers.parseEther("2");
+            await nodeBooster.connect(user1).upgradeEngine(1, { value: engine1Price });
+        });
+
+        it("Should return 0 rewards if less than MIN_WD has passed", async function () {
+            const minWD = await nodeBooster.MIN_WD();
+            
+            // Check immediately after purchase
+            const pendingImmediate = await nodeBooster.calcPending(user1.address);
+            expect(pendingImmediate).to.equal(0);
+            
+            // Check after half MIN_WD (should still be 0)
+            await ethers.provider.send("evm_increaseTime", [Number(minWD) / 2]);
+            await ethers.provider.send("evm_mine");
+            
+            const pendingHalf = await nodeBooster.calcPending(user1.address);
+            expect(pendingHalf).to.equal(0);
+            
+            // Check after almost MIN_WD (should still be 0)
+            await ethers.provider.send("evm_increaseTime", [Number(minWD) / 2 - 60]); // -1 minute
+            await ethers.provider.send("evm_mine");
+            
+            const pendingAlmost = await nodeBooster.calcPending(user1.address);
+            expect(pendingAlmost).to.equal(0);
+        });
+
+        it("Should calculate rewards based on exact seconds after MIN_WD", async function () {
+            const minWD = await nodeBooster.MIN_WD();
+            
+            // Fast forward exactly MIN_WD
+            await ethers.provider.send("evm_increaseTime", [Number(minWD)]);
+            await ethers.provider.send("evm_mine");
+            
+            const pendingMinWD = await nodeBooster.calcPending(user1.address);
+            expect(pendingMinWD).to.be.gt(0);
+            
+            // Fast forward additional half MIN_WD (1.5 * MIN_WD total)
+            await ethers.provider.send("evm_increaseTime", [Number(minWD) / 2]);
+            await ethers.provider.send("evm_mine");
+            
+            const pending1_5MinWD = await nodeBooster.calcPending(user1.address);
+            expect(pending1_5MinWD).to.be.gt(pendingMinWD);
+            
+            // Check that the relationship is approximately correct (1.5x rewards for 1.5x time)
+            const ratio = Number(pending1_5MinWD) / Number(pendingMinWD);
+            expect(ratio).to.be.closeTo(1.5, 0.01); // Within 1% tolerance
+        });
+
+        it("Should calculate precise per-second rewards", async function () {
+            const minWD = await nodeBooster.MIN_WD();
+            
+            // Calculate expected per-second reward
+            // Engine 1: cumulative cost = 2 AVAX, rewardCapPct = 450%, hashPower = 1%
+            const cumulativeCost = ethers.parseEther("2");
+            const rewardCapPct = 450n;
+            const hashPower = 1n;
+            
+            // dailyReward = ((cumulativeCost * rewardCapPct / 100) / 405) * (100 + hashPower) / 100
+            const dailyRewardBase = (cumulativeCost * rewardCapPct) / (405n * 100n);
+            const dailyReward = (dailyRewardBase * (100n + hashPower)) / 100n;
+            const perSecondReward = dailyReward / (24n * 60n * 60n); // 86400 seconds
+            
+            // Test rewards after MIN_WD + additional time
+            const testSeconds = Number(minWD) + (60 * 60); // MIN_WD + 1 hour
+            await ethers.provider.send("evm_increaseTime", [testSeconds]);
+            await ethers.provider.send("evm_mine");
+            
+            const actualRewards = await nodeBooster.calcPending(user1.address);
+            const expectedRewards = perSecondReward * BigInt(testSeconds);
+            
+            // Should be very close (within 1 wei due to rounding)
+            expect(actualRewards).to.be.closeTo(expectedRewards, 1);
+        });
+
+        it("Should prevent claiming before MIN_WD minimum interval", async function () {
+            const minWD = await nodeBooster.MIN_WD();
+            
+            // Try to claim immediately (should fail with 'No rewards' because calcPending returns 0)
+            await expect(nodeBooster.connect(user1).claimRewards())
+                .to.be.revertedWithCustomError(nodeBooster, "NoRewards");
+            
+            // Wait almost MIN_WD
+            await ethers.provider.send("evm_increaseTime", [Number(minWD) - 60]); // MIN_WD - 1 minute
+            await ethers.provider.send("evm_mine");
+            
+            // Still should fail with 'No rewards' because calcPending enforces minimum interval
+            await expect(nodeBooster.connect(user1).claimRewards())
+                .to.be.revertedWithCustomError(nodeBooster, "NoRewards");
+        });
+
+        it("Should allow claiming after MIN_WD and set lastClaimTime to block.timestamp", async function () {
+            const minWD = await nodeBooster.MIN_WD();
+            
+            // Wait exactly MIN_WD
+            await ethers.provider.send("evm_increaseTime", [Number(minWD)]);
+            await ethers.provider.send("evm_mine");
+            
+            const pendingBefore = await nodeBooster.calcPending(user1.address);
+            expect(pendingBefore).to.be.gt(0);
+            
+            // Get block timestamp before claim
+            const blockBefore = await ethers.provider.getBlock("latest");
+            const timestampBefore = blockBefore.timestamp;
+            
+            // Claim rewards
+            await nodeBooster.connect(user1).claimRewards();
+            
+            // Get user info after claim
+            const userInfo = await nodeBooster.getUserAccountInfo(user1.address);
+            const lastClaimTime = userInfo.lastClaimTime;
+            
+            // lastClaimTime should be set to the block timestamp of the claim transaction
+            const blockAfter = await ethers.provider.getBlock("latest");
+            expect(lastClaimTime).to.equal(blockAfter.timestamp);
+            expect(lastClaimTime).to.be.gt(timestampBefore);
+        });
+
+        it("Should accumulate rewards across multiple claim periods accurately", async function () {
+            const minWD = await nodeBooster.MIN_WD();
+            
+            // Record initial state
+            const initialUserInfo = await nodeBooster.getUserAccountInfo(user1.address);
+            const initialClaimed = initialUserInfo.userTotalRewardsClaimed;
+            
+            // First claim after MIN_WD
+            await ethers.provider.send("evm_increaseTime", [Number(minWD)]);
+            await ethers.provider.send("evm_mine");
+            
+            const firstPending = await nodeBooster.calcPending(user1.address);
+            await nodeBooster.connect(user1).claimRewards();
+            
+            const userInfoAfterFirst = await nodeBooster.getUserAccountInfo(user1.address);
+            const firstClaimAmount = userInfoAfterFirst.userTotalRewardsClaimed - initialClaimed;
+            
+            // Wait another 1.5 * MIN_WD
+            await ethers.provider.send("evm_increaseTime", [Number(minWD) + Number(minWD) / 2]); // 1.5 * MIN_WD
+            await ethers.provider.send("evm_mine");
+            
+            const secondPending = await nodeBooster.calcPending(user1.address);
+            await nodeBooster.connect(user1).claimRewards();
+            
+            const userInfoAfterSecond = await nodeBooster.getUserAccountInfo(user1.address);
+            const secondClaimAmount = userInfoAfterSecond.userTotalRewardsClaimed - userInfoAfterFirst.userTotalRewardsClaimed;
+            
+            // The second claim should be approximately 1.5x the first claim
+            const ratio = Number(secondClaimAmount) / Number(firstClaimAmount);
+            expect(ratio).to.be.closeTo(1.5, 0.05); // Allow 5% tolerance for any accumulated precision differences
+            
+            // Check that rewards are accumulating correctly
+            expect(userInfoAfterSecond.userTotalRewardsClaimed).to.be.gt(userInfoAfterFirst.userTotalRewardsClaimed);
+            expect(userInfoAfterFirst.userTotalRewardsClaimed).to.be.gt(initialClaimed);
+        });
+
+        it("Should handle partial day rewards correctly without losing time", async function () {
+            // Wait 1 day + 23 hours (47 hours total)
+            await ethers.provider.send("evm_increaseTime", [47 * 60 * 60]); // 47 hours
+            await ethers.provider.send("evm_mine");
+            
+            const pendingAfter47h = await nodeBooster.calcPending(user1.address);
+            expect(pendingAfter47h).to.be.gt(0);
+            
+            // Claim rewards (should get rewards for all 47 hours)
+            await nodeBooster.connect(user1).claimRewards();
+            
+            // Immediately check - should be 0 because minimum interval not met
+            const pendingImmediate = await nodeBooster.calcPending(user1.address);
+            expect(pendingImmediate).to.equal(0);
+            
+            // Wait exactly 1 more day from claim time
+            await ethers.provider.send("evm_increaseTime", [24 * 60 * 60]); // 24 hours
+            await ethers.provider.send("evm_mine");
+            
+            const pendingAfterNextDay = await nodeBooster.calcPending(user1.address);
+            expect(pendingAfterNextDay).to.be.gt(0);
+            
+            // The new pending should be approximately equal to 1 day's worth of rewards
+            // Compare with the rate from the first 47 hours
+            const hourlyRate = Number(pendingAfter47h) / 47;
+            const expectedNext24h = hourlyRate * 24;
+            const actualNext24h = Number(pendingAfterNextDay);
+            
+            expect(actualNext24h).to.be.closeTo(expectedNext24h, expectedNext24h * 0.01); // 1% tolerance
+        });
+
+        it("Should respect reward caps even with per-second calculation", async function () {
+            // Fast forward to near the end of reward period
+            // Engine 1 has 405 day cap, so go to day 404
+            await ethers.provider.send("evm_increaseTime", [404 * 24 * 60 * 60]); // 404 days
+            await ethers.provider.send("evm_mine");
+            
+            const pendingNearEnd = await nodeBooster.calcPending(user1.address);
+            expect(pendingNearEnd).to.be.gt(0);
+            
+            // Fast forward past the 405 day cap
+            await ethers.provider.send("evm_increaseTime", [2 * 24 * 60 * 60]); // +2 more days (406 total)
+            await ethers.provider.send("evm_mine");
+            
+            const pendingPastCap = await nodeBooster.calcPending(user1.address);
+            
+            // Should be same as near end because we hit the day cap
+            expect(pendingPastCap).to.equal(pendingNearEnd);
+            
+            // Verify the cap is exactly what we expect
+            const userInfo = await nodeBooster.getUserEngineCapStatus(user1.address, 1);
+            expect(pendingPastCap).to.be.lte(userInfo.maxRewards);
+        });
+
+        it("Should handle engine upgrades correctly with per-second rewards", async function () {
+            // Wait 25 hours and upgrade to engine 2
+            await ethers.provider.send("evm_increaseTime", [25 * 60 * 60]); // 25 hours
+            await ethers.provider.send("evm_mine");
+            
+            const pendingBeforeUpgrade = await nodeBooster.calcPending(user1.address);
+            expect(pendingBeforeUpgrade).to.be.gt(0);
+            
+            // Upgrade to engine 2
+            const engine2UpgradeCost = ethers.parseEther("4"); // Engine 2 costs 4 additional AVAX
+            await nodeBooster.connect(user1).upgradeEngine(2, { value: engine2UpgradeCost });
+            
+            // Check that pending rewards were stored
+            const storedRewards = await nodeBooster.getTotalPendingRewards(user1.address);
+            expect(storedRewards).to.be.gt(0);
+            
+            // Wait 1 day with new engine
+            await ethers.provider.send("evm_increaseTime", [24 * 60 * 60]); // 24 hours
+            await ethers.provider.send("evm_mine");
+            
+            const newEnginePending = await nodeBooster.calcPending(user1.address);
+            expect(newEnginePending).to.be.gt(0);
+            
+            // New engine should generate more rewards per second (higher cumulative cost and hashPower)
+            // Engine 2: cumulative cost = 6 AVAX, hashPower = 2%
+            // Should be higher reward rate than engine 1
+            const totalClaimable = await nodeBooster.getUserEngineInfo(user1.address);
+            expect(totalClaimable.totalClaimable).to.equal(storedRewards + newEnginePending);
         });
     });
 });

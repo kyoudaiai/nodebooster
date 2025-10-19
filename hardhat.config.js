@@ -60,7 +60,7 @@ module.exports = {
     }
   },
   gasReporter: {
-    enabled: false,
+    enabled: true,
     currency: 'USD',
   },
   contractSizer: {
@@ -74,7 +74,9 @@ module.exports = {
       url: "http://127.0.0.1:8545",
     },
     hardhat: {
-      allowUnlimitedContractSize: true
+      allowUnlimitedContractSize: true,
+      gasPrice: 225000000000, // 225 gwei
+      gas: 8000000
     },    
     bsctestnet: {
       url: "https://data-seed-prebsc-1-s1.binance.org:8545",
