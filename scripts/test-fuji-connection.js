@@ -2,7 +2,7 @@ const { ethers } = require("hardhat");
 
 async function main() {
   try {
-    console.log("🔍 Testing Fuji Testnet Connection...\n");
+    console.log("🔍 Testing Connection...\n");
     
     // Get network info
     const network = await ethers.provider.getNetwork();
@@ -15,7 +15,7 @@ async function main() {
     
     // Get balance
     const balance = await ethers.provider.getBalance(signer.address);
-    console.log("💰 AVAX Balance:", ethers.formatEther(balance), "AVAX");
+    console.log("💰 Balance:", ethers.formatEther(balance), "AVAX");
     
     // Get latest block
     const blockNumber = await ethers.provider.getBlockNumber();
@@ -26,13 +26,13 @@ async function main() {
     console.log("⛽ Gas Price:", ethers.formatUnits(gasPrice.gasPrice, "gwei"), "gwei");
     
     // Connection status
-    if (network.chainId === 43113n) {
-      console.log("\n✅ Successfully connected to Avalanche Fuji Testnet!");
+    if (network.chainId) {
+      console.log("\n✅ Successfully connected to: ", network.name);
       
       if (balance > ethers.parseEther("0.1")) {
-        console.log("✅ Sufficient AVAX balance for deployment");
+        console.log("✅ Sufficient balance for deployment");
       } else {
-        console.log("⚠️  Low AVAX balance. Get testnet AVAX from: https://faucet.avax.network/");
+        console.log("⚠️  Low balance. Get testnet AVAX from: https://faucet.avax.network/");
       }
     } else {
       console.log("❌ Connected to wrong network!");

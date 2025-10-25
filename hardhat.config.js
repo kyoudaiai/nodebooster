@@ -138,6 +138,21 @@ module.exports = {
       gasPrice: 225000000000, // 225 gwei
       gas: 8000000
     },
+    // Sonic Networks
+    sonic: {
+      url: "https://rpc.soniclabs.com",
+      chainId: 146,
+      accounts: [ privateKey ],
+      // gasPrice: 1000000000, // 1 gwei (low cost as mentioned)
+      // gas: 8000000
+    },
+    sonicBlaze: {
+      url: "https://rpc.blaze.soniclabs.com",
+      chainId: 57054,
+      accounts: [ privateKey ],
+      // gasPrice: 1000000000, // 1 gwei
+      // gas: 8000000
+    },
   },
   etherscan: {
     apiKey: {
@@ -151,7 +166,10 @@ module.exports = {
       optimisticSepolia: process.env.OPTIMISM_API_KEY || "8EP8CJQMPGAS1VZC4K3GUAXR3HVPYAQQHA",
       // Avalanche
       avalanche: process.env.SNOWTRACE_API_KEY || "verifyContract",
-      avalancheFujiTestnet: process.env.SNOWTRACE_API_KEY || "verifyContract"
+      avalancheFujiTestnet: process.env.SNOWTRACE_API_KEY || "verifyContract",
+      // Sonic
+      sonic: process.env.SONIC_API_KEY || "verifyContract",
+      sonictestnet: process.env.SONIC_API_KEY || "verifyContract"
     },
     customChains: [
       {
@@ -168,6 +186,22 @@ module.exports = {
         urls: {
           apiURL: "https://api-testnet.snowtrace.io/api",
           browserURL: "https://testnet.snowtrace.io/"
+        }
+      },
+      {
+        network: "sonic",
+        chainId: 146,
+        urls: {
+          apiURL: "https://api.sonicscan.org/api",
+          browserURL: "https://sonicscan.org/"
+        }
+      },
+      {
+        network: "sonictestnet",
+        chainId: 64165,
+        urls: {
+          apiURL: "https://api.testnet.sonicscan.org/api",
+          browserURL: "https://testnet.sonicscan.org/"
         }
       }
     ]

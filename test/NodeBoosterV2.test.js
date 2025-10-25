@@ -383,6 +383,124 @@ describe("NodeBooster V2", function () {
         });
     });
     
+    describe("Token Configuration", function () {
+        let newUsdcToken;
+        let newAvax0Token;
+        
+        beforeEach(async function () {
+            // Deploy new mock tokens for testing
+            const MockERC20 = await ethers.getContractFactory("MockERC20");
+            newUsdcToken = await MockERC20.deploy("New USDC", "nUSDC", 6);
+            await newUsdcToken.waitForDeployment();
+            
+            const Avax0TokenV1 = await ethers.getContractFactory("Avax0TokenV1");
+            const newAvax0Proxy = await upgrades.deployProxy(
+                Avax0TokenV1,
+                ["New AVAX0", "nAVAX0", ethers.parseEther("10000000")],
+                { initializer: "initialize", kind: "uups" }
+            );
+            await newAvax0Proxy.waitForDeployment();
+            newAvax0Token = await ethers.getContractAt("Avax0TokenV1", await newAvax0Proxy.getAddress());
+        });
+        
+        it("Should allow owner to update token addresses", async function () {
+            const initialUsdcAddress = await nodeBooster.usdcToken();
+            const initialAvax0Address = await nodeBooster.avax0Token();
+            
+            await nodeBooster.setTokens(await newUsdcToken.getAddress(), await newAvax0Token.getAddress());
+            
+            expect(await nodeBooster.usdcToken()).to.equal(await newUsdcToken.getAddress());
+            expect(await nodeBooster.avax0Token()).to.equal(await newAvax0Token.getAddress());
+            expect(await nodeBooster.usdcToken()).to.not.equal(initialUsdcAddress);
+            expect(await nodeBooster.avax0Token()).to.not.equal(initialAvax0Address);
+        });
+        
+        it("Should not allow non-owner to update token addresses", async function () {
+            await expect(nodeBooster.connect(user1).setTokens(await newUsdcToken.getAddress(), await newAvax0Token.getAddress()))
+                .to.be.revertedWithCustomError(nodeBooster, "OwnableUnauthorizedAccount");
+        });
+        
+        it("Should not allow setting zero address for USDC token", async function () {
+            await expect(nodeBooster.setTokens(ethers.ZeroAddress, await newAvax0Token.getAddress()))
+                .to.be.revertedWithCustomError(nodeBooster, "ZeroAddress");
+        });
+        
+        it("Should not allow setting zero address for AVAX0 token", async function () {
+            await expect(nodeBooster.setTokens(await newUsdcToken.getAddress(), ethers.ZeroAddress))
+                .to.be.revertedWithCustomError(nodeBooster, "ZeroAddress");
+        });
+        
+        it("Should not allow setting both addresses to zero", async function () {
+            await expect(nodeBooster.setTokens(ethers.ZeroAddress, ethers.ZeroAddress))
+                .to.be.revertedWithCustomError(nodeBooster, "ZeroAddress");
+        });
+        
+        it("Should work correctly with new tokens after update", async function () {
+            // Mint new tokens to users
+            await newUsdcToken.mint(user1.address, ethers.parseUnits("1000", 6));
+            await newAvax0Token.transfer(await nodeBooster.getAddress(), ethers.parseEther("1000"));
+            
+            // Update token addresses
+            await nodeBooster.setTokens(await newUsdcToken.getAddress(), await newAvax0Token.getAddress());
+            
+            // Test registration with new USDC token
+            await newUsdcToken.connect(user1).approve(await nodeBooster.getAddress(), REGISTRATION_FEE);
+            
+            const initialAvax0Balance = await newAvax0Token.balanceOf(user1.address);
+            
+            await expect(nodeBooster.connect(user1).register(ethers.ZeroAddress))
+                .to.emit(nodeBooster, "UserRegistered");
+            
+            // Check that new AVAX0 tokens were distributed
+            expect(await newAvax0Token.balanceOf(user1.address)).to.equal(initialAvax0Balance + AVAX0_REWARD);
+            
+            // Check that new USDC was collected
+            expect(await newUsdcToken.balanceOf(user1.address)).to.equal(ethers.parseUnits("1000", 6) - REGISTRATION_FEE);
+        });
+        
+        it("Should handle engine rewards with new AVAX0 token", async function () {
+            // Setup: Update tokens and register user
+            await newUsdcToken.mint(user1.address, ethers.parseUnits("1000", 6));
+            await newAvax0Token.transfer(await nodeBooster.getAddress(), ethers.parseEther("1000"));
+            
+            await nodeBooster.setTokens(await newUsdcToken.getAddress(), await newAvax0Token.getAddress());
+            
+            await newUsdcToken.connect(user1).approve(await nodeBooster.getAddress(), REGISTRATION_FEE);
+            await nodeBooster.connect(user1).register(ethers.ZeroAddress);
+            
+            // Purchase an engine
+            const engine1Price = ethers.parseEther("2");
+            await nodeBooster.connect(user1).upgradeEngine(1, { value: engine1Price });
+            
+            // Fast forward time to accumulate rewards
+            await ethers.provider.send("evm_increaseTime", [2 * 24 * 60 * 60]); // 2 days
+            await ethers.provider.send("evm_mine");
+            
+            const pendingRewards = await nodeBooster.calcPending(user1.address);
+            expect(pendingRewards).to.be.gt(0);
+            
+            const initialBalance = await newAvax0Token.balanceOf(user1.address);
+            
+            // Claim rewards
+            await nodeBooster.connect(user1).claimRewards();
+            
+            // Check that new AVAX0 tokens were distributed as rewards
+            expect(await newAvax0Token.balanceOf(user1.address)).to.be.gt(initialBalance);
+        });
+        
+        it("Should allow setting same token addresses (no-op)", async function () {
+            const currentUsdcAddress = await nodeBooster.usdcToken();
+            const currentAvax0Address = await nodeBooster.avax0Token();
+            
+            // This should not revert
+            await nodeBooster.setTokens(currentUsdcAddress, currentAvax0Address);
+            
+            // Addresses should remain the same
+            expect(await nodeBooster.usdcToken()).to.equal(currentUsdcAddress);
+            expect(await nodeBooster.avax0Token()).to.equal(currentAvax0Address);
+        });
+    });
+    
     describe("Emergency Functions", function () {
         it("Should allow owner to pause and unpause", async function () {
             await nodeBooster.pause();

@@ -15,41 +15,75 @@ async function main() {
     // Detect network
     const network = hre.network.name || process.env.NETWORK;
 
+    var $testnet = false;
+    if (network === "hardhat" || network === "localhost" || network === "fuji" || network === "sonicBlaze") { $testnet = true; }
+
     if (network === "hardhat" || network === "localhost") {
-        console.log("Local network detected. Deploying mock USDC token...");
-        const MockERC20 = await ethers.getContractFactory("MockERC20");
-        const usdcToken = await MockERC20.deploy("USD Coin", "USDC", 6);
-        await usdcToken.waitForDeployment();
-        const usdcAddress = await usdcToken.getAddress();
-        console.log("✅ Mock USDC deployed at:", usdcAddress);
-        process.env.USDC_ADDRESS = usdcAddress;
-        process.env.AVAX0_ADDRESS = process.env.AVAX0_fuji || "0x0000000000000000000000000000000000000000"; // Replace with actual if available
-    }    
+        console.log("\nLocal network detected.");
+    }
     else if (network === "fuji") {
-        // process.env.USDC_ADDRESS = "0x5425890298aed601595a70AB815c96711a31Bc65";
+        console.log("\nFuji testnet detected.");
         process.env.AVAX0_ADDRESS = process.env.AVAX0_fuji || "0x0000000000000000000000000000000000000000"; // Replace with actual if available
+        process.env.USDC_ADDRESS = process.env.USDC_fuji || "0x0000000000000000000000000000000000000000"; // Replace with actual if available
+    }
+    else if (network === "sonicBlaze") {
+        console.log("\nSonic Blaze testnet detected.");
+        process.env.AVAX0_ADDRESS = process.env.AVAX0_sonicBlaze || "0x0000000000000000000000000000000000000000"; // Replace with actual if available
+        process.env.USDC_ADDRESS = process.env.USDC_sonicBlaze || "0x0000000000000000000000000000000000000000"; // Replace with actual if available
+    }
+    else if (network === "avalanche") {
+        console.log("\nAvalanche mainnet detected.");
+        process.env.AVAX0_ADDRESS = process.env.AVAX0_avalanche || "0x0000000000000000000000000000000000000000"; // Replace with actual if available
+        process.env.USDC_ADDRESS = process.env.USDC_avalanche || "0x0000000000000000000000000000000000000000"; // Replace with actual if available
+    }
+    else if (network === "sonic") {
+        console.log("Sonic mainnet detected.");
+        process.env.AVAX0_ADDRESS = process.env.NODE0_sonic || "0x0000000000000000000000000000000000000000"; // Replace with actual if available
+        process.env.USDC_ADDRESS = process.env.USDC_sonic || "0x0000000000000000000000000000000000000000"; // Replace with actual if available
+    }
 
-        console.log("Fuji testnet detected. Deploying mock USDC token...");
+
+
+
+
+
+    // USDC setup
+    if (!process.env.USDC_ADDRESS || process.env.USDC_ADDRESS === "0x0000000000000000000000000000000000000000") {
+        console.log("\nNo USDC detected. Deploying mock USDC token...");
         const MockERC20 = await ethers.getContractFactory("MockERC20");
         const usdcToken = await MockERC20.deploy("USD Coin", "USDC", 6);
         await usdcToken.waitForDeployment();
         const usdcAddress = await usdcToken.getAddress();
         console.log("✅ Mock USDC deployed at:", usdcAddress);
-        process.env.USDC_ADDRESS = usdcAddress;
-        process.env.AVAX0_ADDRESS = process.env.AVAX0_fuji || "0x0000000000000000000000000000000000000000"; // Replace with actual if available
+        process.env.USDC_ADDRESS = usdcAddress;        
+    }    
 
-    }    
-    else if (network === "avalanche") {
-        process.env.USDC_ADDRESS = "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e";
-    }    
-    const USDC_ADDRESS = process.env.USDC_ADDRESS || "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48A6E"; // USDC on Avalanche
+    // If AVAX0_ADDRESS not provided, deploy a new AVAX0 token for testing
+    if (!process.env.AVAX0_ADDRESS || process.env.AVAX0_ADDRESS === "0x0000000000000000000000000000000000000000") {
+        console.log("\n\nAVAX0_ADDRESS not provided. Deploying new AVAX0 token for testing...");
+        
+        const Avax0TokenV1 = await ethers.getContractFactory("Avax0TokenV1");
+        const avax0Proxy = await upgrades.deployProxy(
+            Avax0TokenV1,
+            ["avax0", "avax0", ethers.parseEther("5000000")], // 5M tokens
+            { initializer: "initialize", kind: "uups" }
+        );
+        await avax0Proxy.waitForDeployment();
+        process.env.AVAX0_ADDRESS = await avax0Proxy.getAddress();
+        AVAX0_Implementation = await upgrades.erc1967.getImplementationAddress(process.env.AVAX0_ADDRESS);
+
+        console.log("✅ AVAX0 token deployed at:");
+        console.log("AVAX0 Proxy at:", process.env.AVAX0_ADDRESS);
+        console.log("AVAX0 Implementation at:", AVAX0_Implementation);
+    }
     
-    let AVAX0_ADDRESS = process.env.AVAX0_ADDRESS;
+        
+        
     
     // System pool addresses (5 addresses with equal split)
 
     // if localhost or hardhat or fuji use 5 random addresses
-    if (network === "hardhat" || network === "localhost" || network === "fuji") {
+    if ($testnet) {
         // Use 5 random addresses from ethers.Wallet.createRandom()
         const randomWallets = Array.from({ length: 5 }, () => ethers.Wallet.createRandom().address);
         process.env.PAYOUT_WALLET_1 = randomWallets[0];
@@ -57,7 +91,7 @@ async function main() {
         process.env.PAYOUT_WALLET_3 = randomWallets[2];
         process.env.PAYOUT_WALLET_4 = randomWallets[3];
         process.env.PAYOUT_WALLET_5 = randomWallets[4];
-        console.log("Using random payout wallets:", randomWallets);
+        console.log("\nUsing random payout wallets:", randomWallets);
     }
     
     const SYSTEM_POOLS = [
@@ -73,35 +107,14 @@ async function main() {
     const AVAX_PERCENTAGES = [5000, 1500, 1500, 1000, 1000]; 
     
 
-    // If AVAX0_ADDRESS not provided, deploy a new AVAX0 token for testing
-    if (!AVAX0_ADDRESS || AVAX0_ADDRESS === "0x0000000000000000000000000000000000000000") {
-        console.log("\nAVAX0_ADDRESS not provided. Deploying new AVAX0 token for testing...");
-        
-        const Avax0TokenV1 = await ethers.getContractFactory("Avax0TokenV1");
-        const avax0Proxy = await upgrades.deployProxy(
-            Avax0TokenV1,
-            ["avax0", "avax0", ethers.parseEther("5000000")], // 5M tokens
-            { initializer: "initialize", kind: "uups" }
-        );
-        await avax0Proxy.waitForDeployment();
-        AVAX0_ADDRESS = await avax0Proxy.getAddress();
-        AVAX0_Implementation = await upgrades.erc1967.getImplementationAddress(AVAX0_ADDRESS);
-        
-        console.log("✅ AVAX0 token deployed at:");
-        console.log("AVAX0 Proxy at:", AVAX0_ADDRESS);
-        console.log("AVAX0 Implementation at:", AVAX0_Implementation);
-    }
-    
-    console.log("\n=== Configuration ===");
-    console.log("USDC Address:", USDC_ADDRESS);
-    console.log("AVAX0 Address:", AVAX0_ADDRESS);
-    console.log("System Pools:", SYSTEM_POOLS);
-    console.log("USDC Percentages:", USDC_PERCENTAGES);
-    console.log("AVAX Percentages:", AVAX_PERCENTAGES);
     
     // make sure first we have USDC and AVAX0 addresses, system pools and usdc/avax percentages
-    if (!USDC_ADDRESS || !AVAX0_ADDRESS) {
-        console.error("❌ Error: USDC_ADDRESS or AVAX0_ADDRESS is not set.");
+    if (!process.env.USDC_ADDRESS || process.env.USDC_ADDRESS === "0x0000000000000000000000000000000000000000") {
+        console.error("❌ Error: USDC_ADDRESS is not set.");
+        process.exit(1);
+    }
+    if (!process.env.AVAX0_ADDRESS || process.env.AVAX0_ADDRESS === "0x0000000000000000000000000000000000000000") {
+        console.error("❌ Error: AVAX0_ADDRESS is not set.");
         process.exit(1);
     }
     if (SYSTEM_POOLS.length !== 5 || USDC_PERCENTAGES.length !== 5 || AVAX_PERCENTAGES.length !== 5) {
@@ -115,10 +128,33 @@ async function main() {
         process.exit(1);
     }
 
+    
+
+    console.log("\n=== Configuration ===");
+    console.log("USDC Address:", process.env.USDC_ADDRESS);
+    console.log("AVAX0 Address:", process.env.AVAX0_ADDRESS);
+    console.log("System Pools:", SYSTEM_POOLS);
+    console.log("USDC Percentages:", USDC_PERCENTAGES);
+    console.log("AVAX Percentages:", AVAX_PERCENTAGES);
+
+    // if testrun flag passed exit here
+    if (process.env.DRYRUN && process.env.DRYRUN == "true") {
+        console.log("\nDRYRUN mode - exiting before deployment.");
+        process.exit(1);
+    }
+    
+
+    // process.exit(1);
 
     try {
         // Deploy NodeBooster V1 contract
         console.log("\nDeploying NodeBoosterV1...");
+
+        
+
+        let USDC_ADDRESS = process.env.USDC_ADDRESS;;
+        let AVAX0_ADDRESS = process.env.AVAX0_ADDRESS;
+
         const NodeBoosterV1 = await ethers.getContractFactory("NodeBoosterV1");
         
         const proxy = await upgrades.deployProxy(

@@ -461,6 +461,12 @@ contract NodeBoosterV2 is
         MIN_WD = _minWd; 
     }
 
+    function setTokens(address _usdcToken, address _avax0Token) external onlyOwner {
+        if (_usdcToken == address(0) || _avax0Token == address(0)) { revert ZeroAddress(); }
+        usdcToken = IERC20(_usdcToken);
+        avax0Token = IERC20(_avax0Token);
+    }
+
     /**
      * @dev Update system pool addresses and distribution percentages
      * @param _sysPools Array of system pool addresses
