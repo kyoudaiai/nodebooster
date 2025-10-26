@@ -732,6 +732,515 @@
           ]
         }
       }
+    },
+    "bec05bbf199e2459db996796b55a5ac308530a5d8ffdfe7484f336eb6ee4cc44": {
+      "address": "0x35D14740762f84033F0e283b9ab7643fA9c0fE4f",
+      "txHash": "0x82cbb14a7f252c54051e08cf9bc323fb63d130add6dea85714aa66260fbd56b8",
+      "layout": {
+        "solcVersion": "0.8.28",
+        "storage": [
+          {
+            "label": "usdcToken",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_contract(IERC20)1482",
+            "contract": "SonicNodeBoosterV2",
+            "src": "contracts/SonicNodeBoosterV2.sol:78"
+          },
+          {
+            "label": "avax0Token",
+            "offset": 0,
+            "slot": "1",
+            "type": "t_contract(IERC20)1482",
+            "contract": "SonicNodeBoosterV2",
+            "src": "contracts/SonicNodeBoosterV2.sol:81"
+          },
+          {
+            "label": "sysPools",
+            "offset": 0,
+            "slot": "2",
+            "type": "t_array(t_address)dyn_storage",
+            "contract": "SonicNodeBoosterV2",
+            "src": "contracts/SonicNodeBoosterV2.sol:84"
+          },
+          {
+            "label": "usdcPcts",
+            "offset": 0,
+            "slot": "3",
+            "type": "t_array(t_uint256)dyn_storage",
+            "contract": "SonicNodeBoosterV2",
+            "src": "contracts/SonicNodeBoosterV2.sol:87"
+          },
+          {
+            "label": "avaxPcts",
+            "offset": 0,
+            "slot": "4",
+            "type": "t_array(t_uint256)dyn_storage",
+            "contract": "SonicNodeBoosterV2",
+            "src": "contracts/SonicNodeBoosterV2.sol:90"
+          },
+          {
+            "label": "defaultReferrer",
+            "offset": 0,
+            "slot": "5",
+            "type": "t_address",
+            "contract": "SonicNodeBoosterV2",
+            "src": "contracts/SonicNodeBoosterV2.sol:93"
+          },
+          {
+            "label": "engineCount",
+            "offset": 0,
+            "slot": "6",
+            "type": "t_uint256",
+            "contract": "SonicNodeBoosterV2",
+            "src": "contracts/SonicNodeBoosterV2.sol:96"
+          },
+          {
+            "label": "MIN_WD",
+            "offset": 0,
+            "slot": "7",
+            "type": "t_uint256",
+            "contract": "SonicNodeBoosterV2",
+            "src": "contracts/SonicNodeBoosterV2.sol:98"
+          },
+          {
+            "label": "rewards",
+            "offset": 0,
+            "slot": "8",
+            "type": "t_mapping(t_uint256,t_struct(Rewards)7401_storage)",
+            "contract": "SonicNodeBoosterV2",
+            "src": "contracts/SonicNodeBoosterV2.sol:110"
+          },
+          {
+            "label": "engines",
+            "offset": 0,
+            "slot": "9",
+            "type": "t_mapping(t_uint256,t_struct(Engine)7422_storage)",
+            "contract": "SonicNodeBoosterV2",
+            "src": "contracts/SonicNodeBoosterV2.sol:126"
+          },
+          {
+            "label": "userAccounts",
+            "offset": 0,
+            "slot": "10",
+            "type": "t_mapping(t_address,t_struct(Account)7458_storage)",
+            "contract": "SonicNodeBoosterV2",
+            "src": "contracts/SonicNodeBoosterV2.sol:144"
+          },
+          {
+            "label": "isBlacklisted",
+            "offset": 0,
+            "slot": "11",
+            "type": "t_mapping(t_address,t_bool)",
+            "contract": "SonicNodeBoosterV2",
+            "src": "contracts/SonicNodeBoosterV2.sol:147"
+          },
+          {
+            "label": "usersList",
+            "offset": 0,
+            "slot": "12",
+            "type": "t_array(t_address)dyn_storage",
+            "contract": "SonicNodeBoosterV2",
+            "src": "contracts/SonicNodeBoosterV2.sol:150"
+          },
+          {
+            "label": "totalUsers",
+            "offset": 0,
+            "slot": "13",
+            "type": "t_uint256",
+            "contract": "SonicNodeBoosterV2",
+            "src": "contracts/SonicNodeBoosterV2.sol:155"
+          },
+          {
+            "label": "totalUsdcCollected",
+            "offset": 0,
+            "slot": "14",
+            "type": "t_uint256",
+            "contract": "SonicNodeBoosterV2",
+            "src": "contracts/SonicNodeBoosterV2.sol:158"
+          },
+          {
+            "label": "totalAvax0Distributed",
+            "offset": 0,
+            "slot": "15",
+            "type": "t_uint256",
+            "contract": "SonicNodeBoosterV2",
+            "src": "contracts/SonicNodeBoosterV2.sol:161"
+          },
+          {
+            "label": "totalEngineRewards",
+            "offset": 0,
+            "slot": "16",
+            "type": "t_uint256",
+            "contract": "SonicNodeBoosterV2",
+            "src": "contracts/SonicNodeBoosterV2.sol:164"
+          },
+          {
+            "label": "totalReferralRewards",
+            "offset": 0,
+            "slot": "17",
+            "type": "t_uint256",
+            "contract": "SonicNodeBoosterV2",
+            "src": "contracts/SonicNodeBoosterV2.sol:167"
+          },
+          {
+            "label": "totalEngineReferralCommissions",
+            "offset": 0,
+            "slot": "18",
+            "type": "t_uint256",
+            "contract": "SonicNodeBoosterV2",
+            "src": "contracts/SonicNodeBoosterV2.sol:170"
+          },
+          {
+            "label": "referralCommissionRates",
+            "offset": 0,
+            "slot": "19",
+            "type": "t_array(t_uint256)10_storage",
+            "contract": "SonicNodeBoosterV2",
+            "src": "contracts/SonicNodeBoosterV2.sol:174"
+          },
+          {
+            "label": "directReferrals",
+            "offset": 0,
+            "slot": "29",
+            "type": "t_mapping(t_address,t_array(t_address)dyn_storage)",
+            "contract": "SonicNodeBoosterV2",
+            "src": "contracts/SonicNodeBoosterV2.sol:177"
+          }
+        ],
+        "types": {
+          "t_address": {
+            "label": "address",
+            "numberOfBytes": "20"
+          },
+          "t_bool": {
+            "label": "bool",
+            "numberOfBytes": "1"
+          },
+          "t_struct(InitializableStorage)73_storage": {
+            "label": "struct Initializable.InitializableStorage",
+            "members": [
+              {
+                "label": "_initialized",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "_initializing",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_struct(OwnableStorage)13_storage": {
+            "label": "struct OwnableUpgradeable.OwnableStorage",
+            "members": [
+              {
+                "label": "_owner",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_struct(PausableStorage)224_storage": {
+            "label": "struct PausableUpgradeable.PausableStorage",
+            "members": [
+              {
+                "label": "_paused",
+                "type": "t_bool",
+                "offset": 0,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_struct(ReentrancyGuardStorage)288_storage": {
+            "label": "struct ReentrancyGuardUpgradeable.ReentrancyGuardStorage",
+            "members": [
+              {
+                "label": "_status",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_uint256": {
+            "label": "uint256",
+            "numberOfBytes": "32"
+          },
+          "t_uint64": {
+            "label": "uint64",
+            "numberOfBytes": "8"
+          },
+          "t_array(t_address)dyn_storage": {
+            "label": "address[]",
+            "numberOfBytes": "32"
+          },
+          "t_array(t_struct(Rewards)7401_storage)dyn_storage": {
+            "label": "struct SonicNodeBoosterV2.Rewards[]",
+            "numberOfBytes": "32"
+          },
+          "t_array(t_uint256)10_storage": {
+            "label": "uint256[10]",
+            "numberOfBytes": "320"
+          },
+          "t_array(t_uint256)dyn_storage": {
+            "label": "uint256[]",
+            "numberOfBytes": "32"
+          },
+          "t_contract(IERC20)1482": {
+            "label": "contract IERC20",
+            "numberOfBytes": "20"
+          },
+          "t_mapping(t_address,t_array(t_address)dyn_storage)": {
+            "label": "mapping(address => address[])",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_address,t_bool)": {
+            "label": "mapping(address => bool)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_address,t_struct(Account)7458_storage)": {
+            "label": "mapping(address => struct SonicNodeBoosterV2.Account)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint256,t_struct(Engine)7422_storage)": {
+            "label": "mapping(uint256 => struct SonicNodeBoosterV2.Engine)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint256,t_struct(Rewards)7401_storage)": {
+            "label": "mapping(uint256 => struct SonicNodeBoosterV2.Rewards)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint256,t_uint256)": {
+            "label": "mapping(uint256 => uint256)",
+            "numberOfBytes": "32"
+          },
+          "t_string_storage": {
+            "label": "string",
+            "numberOfBytes": "32"
+          },
+          "t_struct(Account)7458_storage": {
+            "label": "struct SonicNodeBoosterV2.Account",
+            "members": [
+              {
+                "label": "isRegistered",
+                "type": "t_bool",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "ref",
+                "type": "t_address",
+                "offset": 1,
+                "slot": "0"
+              },
+              {
+                "label": "tRefs",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "tRefRewards",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "cEngine",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "engineStartTime",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "4"
+              },
+              {
+                "label": "lastClaimTime",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "5"
+              },
+              {
+                "label": "tDaysRewarded",
+                "type": "t_mapping(t_uint256,t_uint256)",
+                "offset": 0,
+                "slot": "6"
+              },
+              {
+                "label": "tRewardsClaimedPerEngine",
+                "type": "t_mapping(t_uint256,t_uint256)",
+                "offset": 0,
+                "slot": "7"
+              },
+              {
+                "label": "pending",
+                "type": "t_array(t_struct(Rewards)7401_storage)dyn_storage",
+                "offset": 0,
+                "slot": "8"
+              },
+              {
+                "label": "tClaimed",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "9"
+              }
+            ],
+            "numberOfBytes": "320"
+          },
+          "t_struct(Engine)7422_storage": {
+            "label": "struct SonicNodeBoosterV2.Engine",
+            "members": [
+              {
+                "label": "isActive",
+                "type": "t_bool",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "price",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "hashPower",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "rewardCapDays",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "rewardCapPct",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "4"
+              },
+              {
+                "label": "refLvls",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "5"
+              },
+              {
+                "label": "name",
+                "type": "t_string_storage",
+                "offset": 0,
+                "slot": "6"
+              }
+            ],
+            "numberOfBytes": "224"
+          },
+          "t_struct(Rewards)7401_storage": {
+            "label": "struct SonicNodeBoosterV2.Rewards",
+            "members": [
+              {
+                "label": "engineId",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "startTime",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "endTime",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "withdrawalTime",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "amount",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "4"
+              },
+              {
+                "label": "completed",
+                "type": "t_bool",
+                "offset": 0,
+                "slot": "5"
+              }
+            ],
+            "numberOfBytes": "192"
+          }
+        },
+        "namespaces": {
+          "erc7201:openzeppelin.storage.ReentrancyGuard": [
+            {
+              "contract": "ReentrancyGuardUpgradeable",
+              "label": "_status",
+              "type": "t_uint256",
+              "src": "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol:43",
+              "offset": 0,
+              "slot": "0"
+            }
+          ],
+          "erc7201:openzeppelin.storage.Pausable": [
+            {
+              "contract": "PausableUpgradeable",
+              "label": "_paused",
+              "type": "t_bool",
+              "src": "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol:21",
+              "offset": 0,
+              "slot": "0"
+            }
+          ],
+          "erc7201:openzeppelin.storage.Ownable": [
+            {
+              "contract": "OwnableUpgradeable",
+              "label": "_owner",
+              "type": "t_address",
+              "src": "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol:24",
+              "offset": 0,
+              "slot": "0"
+            }
+          ],
+          "erc7201:openzeppelin.storage.Initializable": [
+            {
+              "contract": "Initializable",
+              "label": "_initialized",
+              "type": "t_uint64",
+              "src": "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol:69",
+              "offset": 0,
+              "slot": "0"
+            },
+            {
+              "contract": "Initializable",
+              "label": "_initializing",
+              "type": "t_bool",
+              "src": "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol:73",
+              "offset": 8,
+              "slot": "0"
+            }
+          ]
+        }
+      }
     }
   }
 }
