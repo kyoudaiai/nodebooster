@@ -17,7 +17,7 @@ error LockNotFound(address account, uint256 lockId);
 error ZeroAddress();
 
 /**
- * @title Avax0TokenV2
+ * @title Node0TokenV2
  * @dev Upgradeable ERC20 token with time lock functionality - Version 2
  * @notice This contract implements a utility token with time-locked transfer restrictions
  * 
@@ -30,7 +30,7 @@ error ZeroAddress();
  * - Multiple locks per address support
  * - Basic ERC20 functionality
  */
-contract Avax0TokenV2 is 
+contract Node0TokenV2 is 
     Initializable,
     ERC20Upgradeable,
     ERC20BurnableUpgradeable,
@@ -79,7 +79,7 @@ contract Avax0TokenV2 is
         string memory _symbol,
         uint256 _initialSupply
     ) public initializer {
-        require(_initialSupply <= MAX_SUPPLY, "Avax0: initial supply exceeds maximum");
+        require(_initialSupply <= MAX_SUPPLY, "Node0: initial supply exceeds maximum");
         
         __ERC20_init(_name, _symbol);
         __ERC20Burnable_init();
@@ -103,9 +103,9 @@ contract Avax0TokenV2 is
      * @param amount Amount of tokens to mint
      */
     function mint(address to, uint256 amount) public whenNotPaused {
-        require(minters[msg.sender], "Avax0: caller is not a minter");
-        require(to != address(0), "Avax0: mint to zero address");
-        require(totalSupply() + amount <= MAX_SUPPLY, "Avax0: minting would exceed max supply");
+        require(minters[msg.sender], "Node0: caller is not a minter");
+        require(to != address(0), "Node0: mint to zero address");
+        require(totalSupply() + amount <= MAX_SUPPLY, "Node0: minting would exceed max supply");
         
         _mint(to, amount);
     }
@@ -117,11 +117,11 @@ contract Avax0TokenV2 is
      * @param releaseTime Timestamp when tokens will be unlocked
      */
     function mintWithLock(address to, uint256 amount, uint256 releaseTime) external whenNotPaused {
-        require(minters[msg.sender], "Avax0: caller is not a minter");
-        require(to != address(0), "Avax0: mint to zero address");
-        require(totalSupply() + amount <= MAX_SUPPLY, "Avax0: minting would exceed max supply");
-        require(releaseTime > block.timestamp, "Avax0: release time must be in future");
-        require(amount > 0, "Avax0: amount must be greater than zero");
+        require(minters[msg.sender], "Node0: caller is not a minter");
+        require(to != address(0), "Node0: mint to zero address");
+        require(totalSupply() + amount <= MAX_SUPPLY, "Node0: minting would exceed max supply");
+        require(releaseTime > block.timestamp, "Node0: release time must be in future");
+        require(amount > 0, "Node0: amount must be greater than zero");
         
         _mint(to, amount);
         _createTimeLock(to, amount, releaseTime);
@@ -133,19 +133,19 @@ contract Avax0TokenV2 is
      * @param amounts Array of amounts to mint to each address
      */
     function batchMint(address[] calldata recipients, uint256[] calldata amounts) external whenNotPaused {
-        require(minters[msg.sender], "Avax0: caller is not a minter");
-        require(recipients.length == amounts.length, "Avax0: arrays length mismatch");
-        require(recipients.length > 0, "Avax0: empty arrays");
+        require(minters[msg.sender], "Node0: caller is not a minter");
+        require(recipients.length == amounts.length, "Node0: arrays length mismatch");
+        require(recipients.length > 0, "Node0: empty arrays");
         
         uint256 totalMintAmount = 0;
         for (uint256 i = 0; i < amounts.length; i++) {
             totalMintAmount += amounts[i];
         }
         
-        require(totalSupply() + totalMintAmount <= MAX_SUPPLY, "Avax0: batch minting would exceed max supply");
+        require(totalSupply() + totalMintAmount <= MAX_SUPPLY, "Node0: batch minting would exceed max supply");
         
         for (uint256 i = 0; i < recipients.length; i++) {
-            require(recipients[i] != address(0), "Avax0: mint to zero address");
+            require(recipients[i] != address(0), "Node0: mint to zero address");
             _mint(recipients[i], amounts[i]);
         }
     }
@@ -189,11 +189,11 @@ contract Avax0TokenV2 is
     }
     
     /**
-     * @dev Internal function to automatically release expired locks
+     * @dev Release expired time locks for an address
      * @param account Address to release locks for
      * @return releasedAmount Total amount of tokens released
      */
-    function _autoReleaseExpiredLocks(address account) internal returns (uint256 releasedAmount) {
+    function releaseExpiredLocks(address account) external returns (uint256 releasedAmount) {
         TimeLock[] storage locks = timeLocks[account];
         
         for (uint256 i = 0; i < locks.length; i++) {
@@ -210,15 +210,6 @@ contract Avax0TokenV2 is
     }
     
     /**
-     * @dev Release expired time locks for an address
-     * @param account Address to release locks for
-     * @return releasedAmount Total amount of tokens released
-     */
-    function releaseExpiredLocks(address account) external returns (uint256 releasedAmount) {
-        return _autoReleaseExpiredLocks(account);
-    }
-    
-    /**
      * @dev Release a specific time lock
      * @param account Address to release lock for
      * @param lockId ID of the lock to release
@@ -227,8 +218,8 @@ contract Avax0TokenV2 is
         if (lockId >= timeLocks[account].length) revert LockNotFound(account, lockId);
         
         TimeLock storage lock = timeLocks[account][lockId];
-        require(!lock.released, "Avax0: lock already released");
-        require(block.timestamp >= lock.releaseTime, "Avax0: lock not yet expired");
+        require(!lock.released, "Node0: lock already released");
+        require(block.timestamp >= lock.releaseTime, "Node0: lock not yet expired");
         
         lock.released = true;
         totalLockedAmount[account] -= lock.amount;
@@ -247,8 +238,8 @@ contract Avax0TokenV2 is
         if (newReleaseTime <= block.timestamp) revert InvalidReleaseTime(newReleaseTime);
         
         TimeLock storage lock = timeLocks[account][lockId];
-        require(!lock.released, "Avax0: cannot extend released lock");
-        require(newReleaseTime > lock.releaseTime, "Avax0: new release time must be later");
+        require(!lock.released, "Node0: cannot extend released lock");
+        require(newReleaseTime > lock.releaseTime, "Node0: new release time must be later");
         
         lock.releaseTime = newReleaseTime;
         emit LockExtended(account, lockId, newReleaseTime);
@@ -260,21 +251,6 @@ contract Avax0TokenV2 is
      * @return Available balance
      */
     function getAvailableBalance(address account) public view returns (uint256) {
-        uint256 totalBalance = balanceOf(account);
-        uint256 lockedAmount = getLockedAmount(account);
-        
-        return totalBalance >= lockedAmount ? totalBalance - lockedAmount : 0;
-    }
-    
-    /**
-     * @dev Get available (unlocked) balance for an address with automatic lock release
-     * @param account Address to check
-     * @return Available balance after releasing expired locks
-     */
-    function getAvailableBalanceWithAutoRelease(address account) public returns (uint256) {
-        // Automatically release expired locks first
-        _autoReleaseExpiredLocks(account);
-        
         uint256 totalBalance = balanceOf(account);
         uint256 lockedAmount = getLockedAmount(account);
         
@@ -333,16 +309,13 @@ contract Avax0TokenV2 is
     }
     
     /**
-     * @dev Transfer function with time lock check and automatic lock release
+     * @dev Transfer function with time lock check
      * @param to Address to transfer tokens to
      * @param amount Amount of tokens to transfer
      * @return bool Success status
      */
     function transfer(address to, uint256 amount) public virtual override whenNotPaused returns (bool) {
         address owner = _msgSender();
-        
-        // Automatically release expired locks first
-        _autoReleaseExpiredLocks(owner);
         
         // Check if sender has enough unlocked tokens
         uint256 availableBalance = getAvailableBalance(owner);
@@ -355,13 +328,10 @@ contract Avax0TokenV2 is
     }
     
     /**
-     * @dev TransferFrom function with time lock check and automatic lock release
+     * @dev TransferFrom function with time lock check
      */
     function transferFrom(address from, address to, uint256 amount) public virtual override whenNotPaused returns (bool) {
         address spender = _msgSender();
-        
-        // Automatically release expired locks first
-        _autoReleaseExpiredLocks(from);
         
         // Check if from address has enough unlocked tokens
         uint256 availableBalance = getAvailableBalance(from);
@@ -375,14 +345,11 @@ contract Avax0TokenV2 is
     }
     
     /**
-     * @dev Burn function with time lock check and automatic lock release
+     * @dev Burn function with time lock check
      * @param amount Amount of tokens to burn
      */
     function burn(uint256 amount) public virtual override {
         address owner = _msgSender();
-        
-        // Automatically release expired locks first
-        _autoReleaseExpiredLocks(owner);
         
         // Check if sender has enough unlocked tokens
         uint256 availableBalance = getAvailableBalance(owner);
@@ -394,12 +361,9 @@ contract Avax0TokenV2 is
     }
     
     /**
-     * @dev BurnFrom function with time lock check and automatic lock release
+     * @dev BurnFrom function with time lock check
      */
     function burnFrom(address account, uint256 amount) public virtual override {
-        // Automatically release expired locks first
-        _autoReleaseExpiredLocks(account);
-        
         // Check if account has enough unlocked tokens
         uint256 availableBalance = getAvailableBalance(account);
         if (amount > availableBalance) {
@@ -416,7 +380,7 @@ contract Avax0TokenV2 is
      * @param isMinter Minter status
      */
     function setMinter(address account, bool isMinter) external onlyOwner {
-        require(account != address(0), "Avax0: cannot set minter for zero address");
+        require(account != address(0), "Node0: cannot set minter for zero address");
         
         minters[account] = isMinter;
         emit MinterUpdated(account, isMinter);
@@ -442,7 +406,7 @@ contract Avax0TokenV2 is
      * @param amount Amount to recover
      */
     function recoverToken(address token, uint256 amount) external onlyOwner {
-        require(token != address(this), "Avax0: cannot recover own tokens");
+        require(token != address(this), "Node0: cannot recover own tokens");
         IERC20(token).transfer(owner(), amount);
     }
     

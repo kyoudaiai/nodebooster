@@ -49,6 +49,8 @@ async function main() {
         'NodeBoosterV2',
         'Avax0TokenV1',
         'Avax0TokenV2',
+        'Node0TokenV1',
+        'Node0TokenV2',
         'MockERC20',
         'NodeBoosterReferralHelper',
         'NodeBoosterStaking'
