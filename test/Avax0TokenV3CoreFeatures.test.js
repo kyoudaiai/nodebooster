@@ -86,10 +86,10 @@ describe("Avax0TokenV3 - Gradual Release Core Functionality", function () {
                 user1.address, lockAmount, releaseTime, customConfig
             );
             
-            const lock = await token.getTimeLock(user1.address, 0);
-            expect(lock.gradualConfig.duration).to.equal(customConfig.duration);
-            expect(lock.gradualConfig.interval).to.equal(customConfig.interval);
-            expect(lock.gradualConfig.enabled).to.equal(customConfig.enabled);
+            const lockInfo = await token.getTimeLockV3(user1.address, 0);
+            expect(lockInfo.config.duration).to.equal(customConfig.duration);
+            expect(lockInfo.config.interval).to.equal(customConfig.interval);
+            expect(lockInfo.config.enabled).to.equal(customConfig.enabled);
         });
         
         it("Should mint with lock and gradual release", async function () {
@@ -112,9 +112,9 @@ describe("Avax0TokenV3 - Gradual Release Core Functionality", function () {
             expect(await token.balanceOf(user2.address)).to.equal(initialBalance + mintAmount);
             expect(await token.getLockedAmount(user2.address)).to.equal(mintAmount);
             
-            const lock = await token.getTimeLock(user2.address, 0);
-            expect(lock.gradualConfig.duration).to.equal(WEEK);
-            expect(lock.gradualConfig.interval).to.equal(DAY);
+            const lockInfo = await token.getTimeLockV3(user2.address, 0);
+            expect(lockInfo.config.duration).to.equal(WEEK);
+            expect(lockInfo.config.interval).to.equal(DAY);
         });
     });
     
@@ -335,7 +335,7 @@ describe("Avax0TokenV3 - Gradual Release Core Functionality", function () {
     describe("Contract Version and Backward Compatibility", function () {
         it("Should report correct contract version", async function () {
             const version = await token.version();
-            expect(version).to.equal("3.0.0");
+            expect(version).to.equal("3.0.1");
         });
         
         it("Should maintain key V2 compatible functions", async function () {

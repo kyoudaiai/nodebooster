@@ -52,8 +52,8 @@ async function main() {
     
     const config = await upgraded.defaultGradualReleaseConfig();
     console.log(`Gradual release config:`);
-    console.log(`  Duration: ${config.duration} seconds (${config.duration / DAY} days)`);
-    console.log(`  Interval: ${config.interval} seconds (${config.interval / DAY} days)`);
+    console.log(`  Duration: ${config.duration} seconds (${Number(config.duration) / DAY} days)`);
+    console.log(`  Interval: ${config.interval} seconds (${Number(config.interval) / DAY} days)`);
     console.log(`  Enabled: ${config.enabled}`);
     
     console.log("Upgrade verification completed!");

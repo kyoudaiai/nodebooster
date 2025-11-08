@@ -16,6 +16,8 @@ error InvalidLockAmount(uint256 amount);
 error InvalidReleaseTime(uint256 releaseTime);
 error InvalidGradualReleaseConfig(uint256 duration, uint256 interval);
 error LockNotFound(address account, uint256 lockId);
+error InvalidLockModification(string reason);
+error InvalidCleanupThreshold(uint256 threshold);
 error ZeroAddress();
 
 /**
@@ -55,23 +57,32 @@ contract Avax0TokenV3 is
         bool enabled;        // Whether gradual release is enabled for this config
     }
     
-    /// @notice Structure to represent a time lock with gradual release
+    /// @notice Structure to represent a time lock (V2 compatible)
     struct TimeLock {
-        uint256 amount;                    // Amount of tokens locked
-        uint256 releaseTime;              // Timestamp when lock expires and gradual release begins
-        bool released;                    // Whether the lock has been fully released
-        GradualReleaseConfig gradualConfig; // Gradual release configuration for this lock
-        uint256 releasedAmount;           // Amount already released during gradual period
+        uint256 amount;      // Amount of tokens locked
+        uint256 releaseTime; // Timestamp when tokens are released
+        bool released;       // Whether the lock has been released
     }
     
     /// @notice Mapping of user address to their time locks (multiple locks per address)
-    mapping(address => TimeLock[]) private _timeLocks;
+    mapping(address => TimeLock[]) public timeLocks;
     
     /// @notice Total locked amount per address (excluding gradually released amounts)
-    mapping(address => uint256) private _totalLockedAmount;
+    mapping(address => uint256) public totalLockedAmount;
+    
+    /// @notice V3: Gradual release configuration per lock (account -> lockId -> config)
+    mapping(address => mapping(uint256 => GradualReleaseConfig)) private _gradualReleaseConfigs;
+    
+    /// @notice V3: Amount already released during gradual period (account -> lockId -> amount)
+    mapping(address => mapping(uint256 => uint256)) private _releasedAmounts;
     
     /// @notice Default gradual release configuration
     GradualReleaseConfig public defaultGradualReleaseConfig;
+    
+    /// @notice Auto cleanup settings
+    bool public autoCleanupEnabled;
+    uint256 public cleanupThreshold; // Number of completed locks before auto cleanup
+    mapping(address => uint256) private _completedLockCount;
     
     // Events
     event MinterUpdated(address account, bool isMinter);
@@ -80,6 +91,9 @@ contract Avax0TokenV3 is
     event TokensGraduallyReleased(address indexed account, uint256 amount, uint256 lockId, uint256 totalReleased);
     event LockExtended(address indexed account, uint256 lockId, uint256 newReleaseTime);
     event GradualReleaseConfigUpdated(uint256 duration, uint256 interval, bool enabled);
+    event LockModified(address indexed account, uint256 lockId, uint256 newAmount, uint256 newReleaseTime, GradualReleaseConfig newConfig);
+    event AutoCleanupConfigured(bool enabled, uint256 threshold);
+    event LocksCleanedUp(address indexed account, uint256 removedCount, uint256 remainingCount);
     
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -131,7 +145,12 @@ contract Avax0TokenV3 is
             enabled: true
         });
         
+        // Initialize auto cleanup settings
+        autoCleanupEnabled = true;
+        cleanupThreshold = 5; // Default: cleanup after 5 completed locks
+        
         emit GradualReleaseConfigUpdated(_duration, _interval, true);
+        emit AutoCleanupConfigured(true, 5);
     }
     
     /**
@@ -152,6 +171,95 @@ contract Avax0TokenV3 is
         });
         
         emit GradualReleaseConfigUpdated(_duration, _interval, _enabled);
+    }
+    
+    /**
+     * @dev Configure auto cleanup settings for released locks
+     * @param _enabled Whether auto cleanup is enabled
+     * @param _threshold Number of completed locks before triggering cleanup
+     */
+    function configureAutoCleanup(bool _enabled, uint256 _threshold) external onlyOwner {
+        if (_enabled && _threshold == 0) {
+            revert InvalidCleanupThreshold(_threshold);
+        }
+        
+        autoCleanupEnabled = _enabled;
+        cleanupThreshold = _threshold;
+        
+        emit AutoCleanupConfigured(_enabled, _threshold);
+    }
+    
+    /**
+     * @dev Manually clean up released locks for an account
+     * @param account Address to clean up locks for
+     * @return removedCount Number of locks removed
+     */
+    function cleanupReleasedLocks(address account) external onlyOwner returns (uint256 removedCount) {
+        return _performCleanup(account);
+    }
+    
+    /**
+     * @dev Internal function to perform lock cleanup
+     * @param account Address to clean up locks for
+     * @return removedCount Number of locks removed
+     */
+    function _performCleanup(address account) internal returns (uint256 removedCount) {
+        TimeLock[] storage locks = timeLocks[account];
+        if (locks.length == 0) return 0;
+        
+        uint256 originalLength = locks.length;
+        uint256 writeIndex = 0;
+        
+        // Compact array by moving non-released locks to the front
+        for (uint256 i = 0; i < locks.length; i++) {
+            if (!locks[i].released) {
+                if (writeIndex != i) {
+                    locks[writeIndex] = locks[i];
+                    // Move associated data
+                    _gradualReleaseConfigs[account][writeIndex] = _gradualReleaseConfigs[account][i];
+                    _releasedAmounts[account][writeIndex] = _releasedAmounts[account][i];
+                    
+                    // Clear old data
+                    delete _gradualReleaseConfigs[account][i];
+                    delete _releasedAmounts[account][i];
+                }
+                writeIndex++;
+            }
+        }
+        
+        // Remove excess elements
+        while (locks.length > writeIndex) {
+            locks.pop();
+        }
+        
+        removedCount = originalLength - writeIndex;
+        
+        if (removedCount > 0) {
+            // Reset completed lock count
+            _completedLockCount[account] = 0;
+            
+            emit LocksCleanedUp(account, removedCount, writeIndex);
+        }
+        
+        return removedCount;
+    }
+    
+    /**
+     * @dev Get the number of completed locks for an account
+     * @param account Address to check
+     * @return count Number of completed locks waiting for cleanup
+     */
+    function getCompletedLockCount(address account) external view returns (uint256) {
+        return _completedLockCount[account];
+    }
+    
+    /**
+     * @dev Get auto cleanup configuration
+     * @return enabled Whether auto cleanup is enabled
+     * @return threshold Number of completed locks before cleanup triggers
+     */
+    function getAutoCleanupConfig() external view returns (bool enabled, uint256 threshold) {
+        return (autoCleanupEnabled, cleanupThreshold);
     }
     
     /**
@@ -197,8 +305,20 @@ contract Avax0TokenV3 is
      * @param releaseTime Timestamp when tokens will start unlocking
      */
     function mintWithLock(address to, uint256 amount, uint256 releaseTime) external whenNotPaused {
-        GradualReleaseConfig memory emptyConfig = GradualReleaseConfig(0, 0, false);
-        this.mintWithLock(to, amount, releaseTime, emptyConfig);
+        require(minters[msg.sender], "Avax0: caller is not a minter");
+        require(to != address(0), "Avax0: mint to zero address");
+        require(totalSupply() + amount <= MAX_SUPPLY, "Avax0: minting would exceed max supply");
+        require(releaseTime > block.timestamp, "Avax0: release time must be in future");
+        require(amount > 0, "Avax0: amount must be greater than zero");
+        
+        // Use explicit struct initialization to avoid potential issues
+        GradualReleaseConfig memory emptyConfig;
+        emptyConfig.duration = 0;
+        emptyConfig.interval = 0;
+        emptyConfig.enabled = false;
+        
+        _mint(to, amount);
+        _createTimeLock(to, amount, releaseTime, emptyConfig);
     }
     
     /**
@@ -256,8 +376,22 @@ contract Avax0TokenV3 is
      * @param releaseTime Timestamp when gradual release will begin
      */
     function createTimeLock(address account, uint256 amount, uint256 releaseTime) external onlyOwner {
-        GradualReleaseConfig memory emptyConfig = GradualReleaseConfig(0, 0, false);
-        this.createTimeLock(account, amount, releaseTime, emptyConfig);
+        if (account == address(0)) revert ZeroAddress();
+        if (amount == 0) revert InvalidLockAmount(amount);
+        if (releaseTime <= block.timestamp) revert InvalidReleaseTime(releaseTime);
+        
+        uint256 availableBalance = getAvailableBalance(account);
+        if (amount > availableBalance) {
+            revert InsufficientUnlockedBalance(account, amount, availableBalance);
+        }
+        
+        // Use explicit struct initialization to avoid potential issues
+        GradualReleaseConfig memory emptyConfig;
+        emptyConfig.duration = 0;
+        emptyConfig.interval = 0;
+        emptyConfig.enabled = false;
+        
+        _createTimeLock(account, amount, releaseTime, emptyConfig);
     }
     
     /**
@@ -283,49 +417,56 @@ contract Avax0TokenV3 is
             gradualConfig = defaultGradualReleaseConfig;
         }
         
-        _timeLocks[account].push(TimeLock({
+        timeLocks[account].push(TimeLock({
             amount: amount,
             releaseTime: releaseTime,
-            released: false,
-            gradualConfig: gradualConfig,
-            releasedAmount: 0
+            released: false
         }));
         
-        _totalLockedAmount[account] += amount;
+        uint256 lockId = timeLocks[account].length - 1;
         
-        uint256 lockId = _timeLocks[account].length - 1;
+        // Store V3 gradual release config separately
+        _gradualReleaseConfigs[account][lockId] = gradualConfig;
+        _releasedAmounts[account][lockId] = 0;
+        
+        totalLockedAmount[account] += amount;
         emit TokensLocked(account, amount, releaseTime, lockId);
     }
     
     /**
      * @dev Calculate available amount for gradual release
-     * @param lock The time lock to calculate for
+     * @param account Address of the lock owner
+     * @param lockId ID of the lock
      * @param currentTime Current timestamp
      * @return availableAmount Amount available for release now
      * @return nextReleaseTime Time when next amount will be available
      */
-    function _calculateGradualRelease(TimeLock storage lock, uint256 currentTime) 
+    function _calculateGradualRelease(address account, uint256 lockId, uint256 currentTime) 
         internal 
         view 
         returns (uint256 availableAmount, uint256 nextReleaseTime) 
     {
+        TimeLock storage lock = timeLocks[account][lockId];
+        GradualReleaseConfig memory gradualConfig = _gradualReleaseConfigs[account][lockId];
+        uint256 releasedAmount = _releasedAmounts[account][lockId];
+        
         // If lock hasn't expired yet, nothing is available
         if (currentTime < lock.releaseTime) {
             return (0, lock.releaseTime);
         }
         
         // If gradual release is disabled, release everything immediately
-        if (!lock.gradualConfig.enabled) {
-            return (lock.amount - lock.releasedAmount, 0);
+        if (!gradualConfig.enabled) {
+            return (lock.amount - releasedAmount, 0);
         }
         
         uint256 timeSinceRelease = currentTime - lock.releaseTime;
-        uint256 totalDuration = lock.gradualConfig.duration;
-        uint256 interval = lock.gradualConfig.interval;
+        uint256 totalDuration = gradualConfig.duration;
+        uint256 interval = gradualConfig.interval;
         
         // If gradual release period is over, release everything
         if (timeSinceRelease >= totalDuration) {
-            return (lock.amount - lock.releasedAmount, 0);
+            return (lock.amount - releasedAmount, 0);
         }
         
         // Calculate how many intervals have passed
@@ -341,7 +482,7 @@ contract Avax0TokenV3 is
         }
         
         // Calculate available amount (total that should be released minus already released)
-        availableAmount = shouldBeReleased > lock.releasedAmount ? shouldBeReleased - lock.releasedAmount : 0;
+        availableAmount = shouldBeReleased > releasedAmount ? shouldBeReleased - releasedAmount : 0;
         
         // Calculate next release time
         nextReleaseTime = lock.releaseTime + ((intervalsPassed + 1) * interval);
@@ -355,26 +496,38 @@ contract Avax0TokenV3 is
      * @return totalReleased Total amount released
      */
     function _processGradualReleases(address account) internal returns (uint256 totalReleased) {
-        TimeLock[] storage locks = _timeLocks[account];
+        TimeLock[] storage locks = timeLocks[account];
         uint256 currentTime = block.timestamp;
+        uint256 newlyCompleted = 0;
         
         for (uint256 i = 0; i < locks.length; i++) {
             if (locks[i].released) continue;
             
-            (uint256 availableAmount, ) = _calculateGradualRelease(locks[i], currentTime);
+            (uint256 availableAmount, ) = _calculateGradualRelease(account, i, currentTime);
             
             if (availableAmount > 0) {
-                locks[i].releasedAmount += availableAmount;
-                _totalLockedAmount[account] -= availableAmount;
+                _releasedAmounts[account][i] += availableAmount;
+                totalLockedAmount[account] -= availableAmount;
                 totalReleased += availableAmount;
                 
-                emit TokensGraduallyReleased(account, availableAmount, i, locks[i].releasedAmount);
+                emit TokensGraduallyReleased(account, availableAmount, i, _releasedAmounts[account][i]);
                 
                 // Mark as fully released if all tokens are released
-                if (locks[i].releasedAmount >= locks[i].amount) {
+                if (_releasedAmounts[account][i] >= locks[i].amount) {
                     locks[i].released = true;
+                    newlyCompleted++;
                     emit TokensUnlocked(account, locks[i].amount, i);
                 }
+            }
+        }
+        
+        // Update completed count and check for auto cleanup
+        if (newlyCompleted > 0) {
+            _completedLockCount[account] += newlyCompleted;
+            
+            // Auto cleanup if enabled and threshold reached
+            if (autoCleanupEnabled && _completedLockCount[account] >= cleanupThreshold) {
+                _performCleanup(account);
             }
         }
         
@@ -405,25 +558,34 @@ contract Avax0TokenV3 is
      * @param lockId ID of the lock to release
      */
     function releaseSpecificLock(address account, uint256 lockId) external {
-        if (lockId >= _timeLocks[account].length) revert LockNotFound(account, lockId);
+        if (lockId >= timeLocks[account].length) revert LockNotFound(account, lockId);
         
-        TimeLock storage lock = _timeLocks[account][lockId];
+        TimeLock storage lock = timeLocks[account][lockId];
         require(!lock.released, "Avax0: lock already released");
         
         uint256 currentTime = block.timestamp;
-        (uint256 availableAmount, ) = _calculateGradualRelease(lock, currentTime);
+        (uint256 availableAmount, ) = _calculateGradualRelease(account, lockId, currentTime);
         
         require(availableAmount > 0, "Avax0: no tokens available for release yet");
         
-        lock.releasedAmount += availableAmount;
-        _totalLockedAmount[account] -= availableAmount;
+        _releasedAmounts[account][lockId] += availableAmount;
+        totalLockedAmount[account] -= availableAmount;
         
-        emit TokensGraduallyReleased(account, availableAmount, lockId, lock.releasedAmount);
+        emit TokensGraduallyReleased(account, availableAmount, lockId, _releasedAmounts[account][lockId]);
         
         // Mark as fully released if all tokens are released
-        if (lock.releasedAmount >= lock.amount) {
+        if (_releasedAmounts[account][lockId] >= lock.amount) {
             lock.released = true;
+            
+            // Increment completed lock count and check for auto cleanup
+            _completedLockCount[account]++;
+            
             emit TokensUnlocked(account, lock.amount, lockId);
+            
+            // Auto cleanup if enabled and threshold reached
+            if (autoCleanupEnabled && _completedLockCount[account] >= cleanupThreshold) {
+                _performCleanup(account);
+            }
         }
     }
     
@@ -434,15 +596,193 @@ contract Avax0TokenV3 is
      * @param newReleaseTime New release timestamp
      */
     function extendLock(address account, uint256 lockId, uint256 newReleaseTime) external onlyOwner {
-        if (lockId >= _timeLocks[account].length) revert LockNotFound(account, lockId);
+        if (lockId >= timeLocks[account].length) revert LockNotFound(account, lockId);
         if (newReleaseTime <= block.timestamp) revert InvalidReleaseTime(newReleaseTime);
         
-        TimeLock storage lock = _timeLocks[account][lockId];
+        TimeLock storage lock = timeLocks[account][lockId];
         require(!lock.released, "Avax0: cannot extend released lock");
         require(newReleaseTime > lock.releaseTime, "Avax0: new release time must be later");
         
         lock.releaseTime = newReleaseTime;
         emit LockExtended(account, lockId, newReleaseTime);
+    }
+    
+    /**
+     * @dev Modify an existing time lock
+     * @param account Address of the lock owner
+     * @param lockId ID of the lock to modify
+     * @param newAmount New amount for the lock (0 to keep current)
+     * @param newReleaseTime New release timestamp (0 to keep current)
+     * @param newGradualConfig New gradual release configuration
+     * @param updateConfig Whether to update the gradual release config
+     */
+    function modifyLock(
+        address account, 
+        uint256 lockId, 
+        uint256 newAmount,
+        uint256 newReleaseTime,
+        GradualReleaseConfig memory newGradualConfig,
+        bool updateConfig
+    ) external onlyOwner {
+        if (lockId >= timeLocks[account].length) revert LockNotFound(account, lockId);
+        
+        TimeLock storage lock = timeLocks[account][lockId];
+        if (lock.released) revert InvalidLockModification("Cannot modify released lock");
+        
+        uint256 currentReleased = _releasedAmounts[account][lockId];
+        
+        // Handle amount modification
+        if (newAmount > 0) {
+            if (newAmount < currentReleased) {
+                revert InvalidLockModification("New amount cannot be less than already released");
+            }
+            
+            // Calculate balance changes
+            uint256 oldAmount = lock.amount;
+            uint256 amountDiff;
+            
+            if (newAmount > oldAmount) {
+                // Increasing lock amount - check available balance
+                amountDiff = newAmount - oldAmount;
+                uint256 availableBalance = getAvailableBalance(account);
+                if (amountDiff > availableBalance) {
+                    revert InsufficientUnlockedBalance(account, amountDiff, availableBalance);
+                }
+                totalLockedAmount[account] += amountDiff;
+            } else if (newAmount < oldAmount) {
+                // Decreasing lock amount
+                amountDiff = oldAmount - newAmount;
+                totalLockedAmount[account] -= amountDiff;
+            }
+            
+            lock.amount = newAmount;
+        }
+        
+        // Handle release time modification
+        if (newReleaseTime > 0) {
+            if (newReleaseTime <= block.timestamp) {
+                revert InvalidReleaseTime(newReleaseTime);
+            }
+            lock.releaseTime = newReleaseTime;
+        }
+        
+        // Handle gradual release config modification
+        if (updateConfig) {
+            if (newGradualConfig.enabled && 
+                (newGradualConfig.duration == 0 || newGradualConfig.interval == 0 || 
+                 newGradualConfig.interval > newGradualConfig.duration)) {
+                revert InvalidGradualReleaseConfig(newGradualConfig.duration, newGradualConfig.interval);
+            }
+            _gradualReleaseConfigs[account][lockId] = newGradualConfig;
+        }
+        
+        emit LockModified(
+            account, 
+            lockId, 
+            lock.amount, 
+            lock.releaseTime, 
+            _gradualReleaseConfigs[account][lockId]
+        );
+    }
+    
+    /**
+     * @dev Modify only the amount of an existing lock
+     * @param account Address of the lock owner
+     * @param lockId ID of the lock to modify
+     * @param newAmount New amount for the lock
+     */
+    function modifyLockAmount(address account, uint256 lockId, uint256 newAmount) external onlyOwner {
+        if (lockId >= timeLocks[account].length) revert LockNotFound(account, lockId);
+        
+        TimeLock storage lock = timeLocks[account][lockId];
+        if (lock.released) revert InvalidLockModification("Cannot modify released lock");
+        
+        uint256 currentReleased = _releasedAmounts[account][lockId];
+        if (newAmount < currentReleased) {
+            revert InvalidLockModification("New amount cannot be less than already released");
+        }
+        
+        uint256 oldAmount = lock.amount;
+        if (newAmount > oldAmount) {
+            // Increasing lock amount - check available balance
+            uint256 amountDiff = newAmount - oldAmount;
+            uint256 availableBalance = getAvailableBalance(account);
+            if (amountDiff > availableBalance) {
+                revert InsufficientUnlockedBalance(account, amountDiff, availableBalance);
+            }
+            totalLockedAmount[account] += amountDiff;
+        } else if (newAmount < oldAmount) {
+            // Decreasing lock amount
+            uint256 amountDiff = oldAmount - newAmount;
+            totalLockedAmount[account] -= amountDiff;
+        }
+        
+        lock.amount = newAmount;
+        
+        emit LockModified(
+            account, 
+            lockId, 
+            lock.amount, 
+            lock.releaseTime, 
+            _gradualReleaseConfigs[account][lockId]
+        );
+    }
+    
+    /**
+     * @dev Modify only the release time of an existing lock
+     * @param account Address of the lock owner
+     * @param lockId ID of the lock to modify
+     * @param newReleaseTime New release timestamp
+     */
+    function modifyLockReleaseTime(address account, uint256 lockId, uint256 newReleaseTime) external onlyOwner {
+        if (lockId >= timeLocks[account].length) revert LockNotFound(account, lockId);
+        if (newReleaseTime <= block.timestamp) revert InvalidReleaseTime(newReleaseTime);
+        
+        TimeLock storage lock = timeLocks[account][lockId];
+        if (lock.released) revert InvalidLockModification("Cannot modify released lock");
+        
+        lock.releaseTime = newReleaseTime;
+        
+        emit LockModified(
+            account, 
+            lockId, 
+            lock.amount, 
+            lock.releaseTime, 
+            _gradualReleaseConfigs[account][lockId]
+        );
+    }
+    
+    /**
+     * @dev Modify only the gradual release configuration of an existing lock
+     * @param account Address of the lock owner
+     * @param lockId ID of the lock to modify
+     * @param newGradualConfig New gradual release configuration
+     */
+    function modifyLockGradualConfig(
+        address account, 
+        uint256 lockId, 
+        GradualReleaseConfig memory newGradualConfig
+    ) external onlyOwner {
+        if (lockId >= timeLocks[account].length) revert LockNotFound(account, lockId);
+        
+        TimeLock storage lock = timeLocks[account][lockId];
+        if (lock.released) revert InvalidLockModification("Cannot modify released lock");
+        
+        if (newGradualConfig.enabled && 
+            (newGradualConfig.duration == 0 || newGradualConfig.interval == 0 || 
+             newGradualConfig.interval > newGradualConfig.duration)) {
+            revert InvalidGradualReleaseConfig(newGradualConfig.duration, newGradualConfig.interval);
+        }
+        
+        _gradualReleaseConfigs[account][lockId] = newGradualConfig;
+        
+        emit LockModified(
+            account, 
+            lockId, 
+            lock.amount, 
+            lock.releaseTime, 
+            _gradualReleaseConfigs[account][lockId]
+        );
     }
     
     /**
@@ -478,7 +818,7 @@ contract Avax0TokenV3 is
      * @return amount Current locked amount
      */
     function getLockedAmount(address account) public view returns (uint256) {
-        return _totalLockedAmount[account];
+        return totalLockedAmount[account];
     }
     
     /**
@@ -502,10 +842,10 @@ contract Avax0TokenV3 is
         ) 
     {
         totalBalance = balanceOf(account);
-        currentlyLocked = _totalLockedAmount[account];
+        currentlyLocked = totalLockedAmount[account];
         availableNow = totalBalance >= currentlyLocked ? totalBalance - currentlyLocked : 0;
         
-        TimeLock[] storage locks = _timeLocks[account];
+        TimeLock[] storage locks = timeLocks[account];
         uint256 currentTime = block.timestamp;
         uint256 totalPending = 0;
         uint256 earliestNextRelease = type(uint256).max;
@@ -513,7 +853,7 @@ contract Avax0TokenV3 is
         for (uint256 i = 0; i < locks.length; i++) {
             if (locks[i].released) continue;
             
-            (uint256 available, uint256 nextRelease) = _calculateGradualRelease(locks[i], currentTime);
+            (uint256 available, uint256 nextRelease) = _calculateGradualRelease(account, i, currentTime);
             totalPending += available;
             
             if (nextRelease > 0 && nextRelease < earliestNextRelease) {
@@ -526,12 +866,64 @@ contract Avax0TokenV3 is
     }
     
     /**
-     * @dev Get all time locks for an address
+     * @dev Get all time locks for an address with V3 extended info
+     * @param account Address to get locks for
+     * @return locks Array of basic TimeLock structures
+     * @return configs Array of gradual release configurations
+     * @return releasedAmounts Array of released amounts
+     */
+    function getTimeLocksV3(address account) 
+        external 
+        view 
+        returns (
+            TimeLock[] memory locks, 
+            GradualReleaseConfig[] memory configs, 
+            uint256[] memory releasedAmounts
+        ) 
+    {
+        locks = timeLocks[account];
+        uint256 length = locks.length;
+        
+        configs = new GradualReleaseConfig[](length);
+        releasedAmounts = new uint256[](length);
+        
+        for (uint256 i = 0; i < length; i++) {
+            configs[i] = _gradualReleaseConfigs[account][i];
+            releasedAmounts[i] = _releasedAmounts[account][i];
+        }
+    }
+    
+    /**
+     * @dev Get all time locks for an address (V2 compatibility)
      * @param account Address to get locks for
      * @return locks Array of TimeLock structures
      */
     function getTimeLocks(address account) external view returns (TimeLock[] memory) {
-        return _timeLocks[account];
+        return timeLocks[account];
+    }
+    
+    /**
+     * @dev Get specific time lock details with V3 info
+     * @param account Address of the lock owner
+     * @param lockId ID of the lock
+     * @return lock TimeLock structure
+     * @return config Gradual release configuration
+     * @return releasedAmount Amount already released
+     */
+    function getTimeLockV3(address account, uint256 lockId) 
+        external 
+        view 
+        returns (
+            TimeLock memory lock, 
+            GradualReleaseConfig memory config, 
+            uint256 releasedAmount
+        ) 
+    {
+        if (lockId >= timeLocks[account].length) revert LockNotFound(account, lockId);
+        
+        lock = timeLocks[account][lockId];
+        config = _gradualReleaseConfigs[account][lockId];
+        releasedAmount = _releasedAmounts[account][lockId];
     }
     
     /**
@@ -540,18 +932,18 @@ contract Avax0TokenV3 is
      * @return count Number of locks
      */
     function getTimeLockCount(address account) external view returns (uint256) {
-        return _timeLocks[account].length;
+        return timeLocks[account].length;
     }
     
     /**
-     * @dev Get specific time lock details
+     * @dev Get specific time lock details (V2 compatibility)
      * @param account Address of the lock owner
      * @param lockId ID of the lock
      * @return lock TimeLock structure
      */
     function getTimeLock(address account, uint256 lockId) external view returns (TimeLock memory lock) {
-        if (lockId >= _timeLocks[account].length) revert LockNotFound(account, lockId);
-        return _timeLocks[account][lockId];
+        if (lockId >= timeLocks[account].length) revert LockNotFound(account, lockId);
+        return timeLocks[account][lockId];
     }
     
     /**
@@ -573,12 +965,12 @@ contract Avax0TokenV3 is
             uint256 totalAmount
         ) 
     {
-        if (lockId >= _timeLocks[account].length) revert LockNotFound(account, lockId);
+        if (lockId >= timeLocks[account].length) revert LockNotFound(account, lockId);
         
-        TimeLock storage lock = _timeLocks[account][lockId];
-        (availableNow, nextReleaseTime) = _calculateGradualRelease(lock, block.timestamp);
+        TimeLock storage lock = timeLocks[account][lockId];
+        (availableNow, nextReleaseTime) = _calculateGradualRelease(account, lockId, block.timestamp);
         
-        return (availableNow, nextReleaseTime, lock.releasedAmount, lock.amount);
+        return (availableNow, nextReleaseTime, _releasedAmounts[account][lockId], lock.amount);
     }
     
     /**
@@ -708,7 +1100,7 @@ contract Avax0TokenV3 is
      * @return version Contract version string
      */
     function version() external pure returns (string memory) {
-        return "3.0.0";
+        return "3.0.3";
     }
     
     /**
@@ -725,12 +1117,23 @@ contract Avax0TokenV3 is
     
     /**
      * @dev Migration function for V2 to V3 upgrade
-     * This function helps migrate existing time locks to include gradual release config
+     * Initialize gradual release configs for existing locks
+     * @param accounts Array of accounts to migrate
+     * @param useDefaultConfig Whether to use default gradual release config for existing locks
      */
-    function migrateV2Locks() external onlyOwner {
-        // This function can be called after upgrade to ensure all existing locks
-        // have proper gradual release configuration
-        // Implementation depends on specific migration needs
+    function migrateV2Locks(address[] calldata accounts, bool useDefaultConfig) external onlyOwner {
+        for (uint256 i = 0; i < accounts.length; i++) {
+            address account = accounts[i];
+            uint256 lockCount = timeLocks[account].length;
+            
+            for (uint256 j = 0; j < lockCount; j++) {
+                // Only initialize if not already set (in case of multiple migrations)
+                if (!_gradualReleaseConfigs[account][j].enabled && useDefaultConfig) {
+                    _gradualReleaseConfigs[account][j] = defaultGradualReleaseConfig;
+                }
+                // _releasedAmounts defaults to 0, which is correct for existing locks
+            }
+        }
     }
     
     // Backward compatibility: maintain old function signatures
@@ -753,26 +1156,4 @@ contract Avax0TokenV3 is
         return _processGradualReleases(account);
     }
     
-    /**
-     * @dev V2 compatibility - total locked amount
-     * @param account Address to check
-     * @return Total locked amount
-     */
-    function totalLockedAmount(address account) external view returns (uint256) {
-        return _totalLockedAmount[account];
-    }
-    
-    /**
-     * @dev V2 compatibility - time locks array access
-     * @param account Address to check
-     * @param index Lock index
-     * @return amount Lock amount
-     * @return releaseTime Release time
-     * @return released Whether released
-     */
-    function timeLocks(address account, uint256 index) external view returns (uint256 amount, uint256 releaseTime, bool released) {
-        if (index >= _timeLocks[account].length) revert LockNotFound(account, index);
-        TimeLock storage lock = _timeLocks[account][index];
-        return (lock.amount, lock.releaseTime, lock.released);
-    }
 }
